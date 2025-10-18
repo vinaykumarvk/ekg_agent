@@ -1,0 +1,27 @@
+# VCS & caches
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.ipynb_checkpoints/
+
+# Local env & secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Big/local data & artifacts (keep structure with .gitkeep in git if needed)
+data/
+!data/.gitkeep
+*.pkl
+*.bin
+*.pdf
+*.log
+
+# Notebooks & misc
+*.ipynb
+.DS_Store
