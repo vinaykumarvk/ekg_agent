@@ -50,11 +50,7 @@ EXPOSE 8080
 
 # Healthcheck (optional; Cloud Run has its own, but helpful locally)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD python - <<'PY' || exit 1
-import urllib.request, os
-url=f"http://127.0.0.1:{os.getenv('PORT','8080')}/health"
-urllib.request.urlopen(url, timeout=2).read()
-PY
+  CMD python -c "import urllib.request, os; urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\"PORT\",\"8080\")}/health', timeout=2).read()" || exit 1
 
 # Start FastAPI via production script
 CMD ["python", "start_production.py"]
