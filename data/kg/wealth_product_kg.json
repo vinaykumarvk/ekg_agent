@@ -1,0 +1,14 @@
+{
+  "nodes": [
+    {
+      "id": "otp",
+      "name": "OTP",
+      "type": "DataEntity",
+      "description": "One Time Password for authentication"
+    }
+  ],
+  "edges": [],
+  "aliases": {
+    "otp": ["OTP", "One Time Password", "authentication code"]
+  }
+}

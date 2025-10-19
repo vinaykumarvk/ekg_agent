@@ -1,0 +1,14 @@
+{
+  "nodes": [
+    {
+      "id": "apf_process",
+      "name": "APF Process",
+      "type": "Process",
+      "description": "APF approval process"
+    }
+  ],
+  "edges": [],
+  "aliases": {
+    "apf_process": ["APF", "APF Process", "approval process"]
+  }
+}

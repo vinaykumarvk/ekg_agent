@@ -1,0 +1,173 @@
+{
+  "info": {
+    "name": "EKG Agent API Tests",
+    "description": "Complete test collection for EKG Agent API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "List Domains",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/domains",
+          "host": ["{{base_url}}"],
+          "path": ["domains"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Basic Query - Wealth Management",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"What is OTP verification?\",\n  \"domain\": \"wealth_management\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/answer",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "answer"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Basic Query - APF",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"What is the APF approval process?\",\n  \"domain\": \"apf\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/answer",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "answer"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Conversational Follow-up",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"How long is the OTP valid?\",\n  \"domain\": \"wealth_management\",\n  \"response_id\": \"{{response_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/answer",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "answer"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Conversation ID Test",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"What is the redemption process?\",\n  \"domain\": \"wealth_management\",\n  \"conversation_id\": \"test-conversation-123\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/answer",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "answer"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Error Handling - Invalid Domain",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"Test question\",\n  \"domain\": \"invalid_domain\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/answer",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "answer"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Error Handling - Malformed Request",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/answer",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "answer"]
+        }
+      },
+      "response": []
+    }
+  ]
+}

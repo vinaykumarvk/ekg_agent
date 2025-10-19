@@ -896,13 +896,20 @@ def grounded_answer_llm(q, nodes, edges, by_id, llm_client, model="gpt-4o", max_
     else:  # balanced
         system_msg = (
             "You are a precise wealth-management assistant. "
-            "Use ONLY the provided graph context. .\n\n"
-            "FORMATTING REQUIREMENTS:\n"
-            "1. Include citations using [KG: entity_name] format\n"
-            "2. Use bullet points (•) for lists and key findings\n"
-            "3. Add markers: 'Key Point:', 'Note:', 'Important:' where appropriate\n"
-            "4. Keep sentences under 25 words\n"
-            "5. Structure with brief intro + bullets + conclusion\n"
+            "Use ONLY the provided graph context.\n\n"
+            "CRITICAL FORMATTING REQUIREMENTS:\n"
+            "1. ATTRIBUTION: Include citations [1], [2], [3] for key claims\n"
+            "2. STRUCTURE: Use clean bullet points (•) for key information\n"
+            "3. CLARITY: Maximum 25 words per sentence\n"
+            "4. PROFESSIONAL: Write like a business document for analysts\n"
+            "5. MARKERS: Use 'Important:', 'Note:', 'Example:' sparingly and professionally\n\n"
+            "ANSWER TEMPLATE:\n"
+            "**Overview:** [3-5 sentence summary] [1]\n\n"
+            "**Key Information:**\n"
+            "• [detailed explanation] [2]\n"
+            "• [detailed explanation] [3]\n"
+            "• [detailed explanation] [1]\n\n"
+            "**Important:** [Any important clarification]\n\n"
         )
 
     # Mode-specific user message templates
@@ -919,10 +926,10 @@ def grounded_answer_llm(q, nodes, edges, by_id, llm_client, model="gpt-4o", max_
 Structure your answer:
 **Answer:** [1-2 sentences with citation]
 
-**Key Details:**
-• Point 1 [KG: entity]
-• Point 2
-• Point 3
+**Key Information:**
+• [brief detail] [KG: entity]
+• [brief detail]
+• [brief detail]
 
 Use evidence provided. Do not invent."""
 
@@ -1651,17 +1658,17 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
             "CRITICAL FORMATTING REQUIREMENTS:\n"
             "1. ATTRIBUTION: Include citations [1], [2] for key claims\n"
             "2. STRUCTURE: Use 3-5 bullet points (•) for key information\n"
-            "3. MARKERS: Add 'Key Point:' and 'Note:' markers\n"
+            "3. MARKERS: Use 'Important:' sparingly and professionally\n"
             "4. CLARITY: Maximum 20 words per sentence\n"
             "5. LENGTH: Keep total answer under 250 words\n\n"
 
             "ANSWER TEMPLATE:\n"
-            "**Direct Answer:** [2-5 sentence summary] [1]\n\n"
-            "**Key Points:**\n"
-            "• Point 1: [brief detail] [2]\n"
-            "• Point 2: [brief detail]\n"
-            "• Point 3: [brief detail] [1]\n\n"
-            "**Note:** [Any important clarification]\n\n"
+            "**Answer:** [2-5 sentence summary] [1]\n\n"
+            "**Key Information:**\n"
+            "• [brief detail] [2]\n"
+            "• [brief detail]\n"
+            "• [brief detail] [1]\n\n"
+            "**Important:** [Any important clarification]\n\n"
 
             "Every factual statement should have a citation. "
         )
@@ -1682,8 +1689,8 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
             "   - Create 5-8 numbered sections for complex topics\n"
             "   - Each section should have 3-6 bullet points\n"
             "3. MARKERS:\n"
-            "   - Use multiple markers: 'Key Point:', 'Note:', 'Important:', 'Example:', 'Analysis:', 'Evidence:'\n"
-            "   - Add at least 5-8 markers throughout the answer\n"
+            "   - Use professional markers: 'Important:', 'Note:', 'Example:', 'Analysis:', 'Evidence:'\n"
+            "   - Add 3-5 markers throughout the answer for clarity\n"
             "4. CLARITY:\n"
             "   - Maximum 25 words per sentence\n"
             "   - One concept per sentence\n"
