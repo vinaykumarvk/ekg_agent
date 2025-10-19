@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from agents.tools.intent_clarification import clarify_intent
 from agents.tools.kg_extraction import run_kg_answer
 from agents.tools.vector_extraction import run_vector_answer
@@ -6,7 +6,7 @@ from agents.tools.answer_formatting import to_markdown_with_citations
 from ekg_core import hybrid_answer  # ← call your tested hybrid
 
 class EKGAgent:
-    def __init__(self, *, client: Any, vs_id: str, G: Any, by_id: Dict, name_index: Dict, preset_params: dict | None = None):
+    def __init__(self, *, client: Any, vs_id: str, G: Any, by_id: Dict, name_index: Dict, preset_params: Optional[dict] = None):
         self.client, self.vs_id = client, vs_id
         self.G, self.by_id, self.name_index = G, by_id, name_index
         self.preset_params = preset_params

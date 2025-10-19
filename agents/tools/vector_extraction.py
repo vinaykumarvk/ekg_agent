@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 from ekg_core import (
     kg_anchors, expand_queries_from_kg, retrieve_parallel, mmr_merge,
     rerank_chunks_by_relevance, expand_chunk_context, build_grounded_messages,
@@ -6,9 +6,9 @@ from ekg_core import (
 )
 
 def run_vector_answer(
-    q: str, *, client: Any, vs_id: str, preset_params: dict | None = None,
-    kg_result: dict | None = None, max_chunks: int = 10, k_each: int = 3,
-    lambda_div: float = 0.4, model: str | None = None
+    q: str, *, client: Any, vs_id: str, preset_params: Optional[dict] = None,
+    kg_result: Optional[dict] = None, max_chunks: int = 10, k_each: int = 3,
+    lambda_div: float = 0.4, model: Optional[str] = None
 ) -> dict:
     if preset_params:
         max_chunks = preset_params.get("max_chunks", max_chunks)

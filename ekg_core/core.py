@@ -14,9 +14,16 @@ Original file is located at
 
 """## Imports"""
 
-import gradio as gr
+try:
+    import gradio as gr
+    _HAS_GRADIO = True
+except ImportError:
+    _HAS_GRADIO = False
+    gr = None
+
 import html
 import re, json
+import threading
 
 import json
 import re
@@ -37,7 +44,9 @@ try:
     _HAS_RAPIDFUZZ = True
 except ImportError:
     _HAS_RAPIDFUZZ = False
-    print("Warning: rapidfuzz not available, using fallback")
+    import logging
+    log = logging.getLogger(__name__)
+    log.warning("rapidfuzz not available, using fallback")
 
 try:
     from IPython.display import display, Markdown
@@ -51,14 +60,65 @@ try:
     _HAS_WIDGETS = True
 except ImportError:
     _HAS_WIDGETS = False
-    print("Warning: ipywidgets not available")
+    import logging
+    log = logging.getLogger(__name__)
+    log.warning("ipywidgets not available")
 
 """## Answer Caching System"""
 
-# Cache configuration
-CACHE_DIR = "/content/drive/MyDrive/Wealth EKG/Product EKG/cache"
+# Cache configuration - Production ready
+import time
+from collections import OrderedDict
+from typing import Optional
+
+# Use settings for cache configuration
+try:
+    from api.settings import settings
+    CACHE_DIR = settings.CACHE_DIR
+    MAX_CACHE_SIZE = settings.MAX_CACHE_SIZE
+    CACHE_TTL = settings.CACHE_TTL
+except ImportError:
+    # Fallback if settings not available
+    CACHE_DIR = os.getenv("CACHE_DIR", "/tmp/ekg_cache")
+    MAX_CACHE_SIZE = int(os.getenv("MAX_CACHE_SIZE", "1000"))
+    CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))
+
+os.makedirs(CACHE_DIR, exist_ok=True)
 ANSWER_CACHE_FILE = os.path.join(CACHE_DIR, "answer_cache.pkl")
 SIMILARITY_THRESHOLD = 0.80
+
+class LRUCache:
+    """Thread-safe LRU cache with TTL support"""
+    def __init__(self, max_size: int = None, ttl: int = None):
+        self.max_size = max_size or MAX_CACHE_SIZE
+        self.ttl = ttl or CACHE_TTL
+        self.cache = OrderedDict()
+        self._lock = threading.Lock()
+    
+    def get(self, key: str) -> Optional[Any]:
+        with self._lock:
+            if key in self.cache:
+                value, timestamp = self.cache[key]
+                if time.time() - timestamp < self.ttl:
+                    self.cache.move_to_end(key)
+                    return value
+                else:
+                    del self.cache[key]
+            return None
+    
+    def set(self, key: str, value: Any) -> None:
+        with self._lock:
+            if len(self.cache) >= self.max_size:
+                self.cache.popitem(last=False)
+            self.cache[key] = (value, time.time())
+    
+    def clear(self) -> None:
+        with self._lock:
+            self.cache.clear()
+    
+    def size(self) -> int:
+        with self._lock:
+            return len(self.cache)
 
 def get_question_embedding(client, question):
     """Get embedding for semantic similarity"""
@@ -177,7 +237,10 @@ def clear_retrieval_cache():
     global _Q_CACHE, _HITS_CACHE
     _Q_CACHE.clear()
     _HITS_CACHE.clear()
-    print("✓ Retrieval cache cleared")
+    import logging
+    log = logging.getLogger(__name__)
+    log.info("Retrieval cache cleared")
+    log.info(f"Q_CACHE size: {_Q_CACHE.size()}, HITS_CACHE size: {_HITS_CACHE.size()}")
 
 """## Configuration Presets"""
 
@@ -191,8 +254,8 @@ ANSWER_PRESETS = {
         "lambda_div": 0.6,
         "max_tokens": 1500,
         "max_expanded": 40,
-        "model": "gpt-5-mini",
-        "_mode": "concise"  # ADD THIS
+        "model": "gpt-5-nano",
+        "_mode": "concise"
     },
     "balanced": {
         "hops": 1,
@@ -203,8 +266,8 @@ ANSWER_PRESETS = {
         "lambda_div": 0.6,
         "max_tokens": 6000,
         "max_expanded": 60,
-        "model": "gpt-5",
-        "_mode": "balanced"  # ADD THIS
+        "model": "gpt-5-mini",
+        "_mode": "balanced"
     },
     "deep": {
         "hops": 2,
@@ -215,8 +278,8 @@ ANSWER_PRESETS = {
         "lambda_div": 0.75,
         "max_tokens": 20000,
         "max_expanded": 120,
-        "model": "gpt-5",  # Use gpt-4o since gpt-5 doesn't exist
-        "_mode": "deep"  # ADD THIS
+        "model": "gpt-5",
+        "_mode": "deep"
     }
 }
 
@@ -857,9 +920,9 @@ Structure your answer:
 **Answer:** [1-2 sentences with citation]
 
 **Key Details:**
-- Point 1 [KG: entity]
-- Point 2
-- Point 3
+• Point 1 [KG: entity]
+• Point 2
+• Point 3
 
 Use evidence provided. Do not invent."""
 
@@ -878,15 +941,15 @@ Structure your answer comprehensively:
 **Overview:** [Brief definition with citation]
 
 **Main Points:**
-- Point 1: [detailed explanation] [KG: entity]
+• Point 1: [detailed explanation] [KG: entity]
   - Sub-detail A
   - Sub-detail B
-- Point 2: [detailed explanation] [KG: entity]
-- Point 3: [detailed explanation]
+• Point 2: [detailed explanation] [KG: entity]
+• Point 3: [detailed explanation]
 
 **Key Insights:**
-- Insight 1
-- Insight 2
+• Insight 1
+• Insight 2
 
 **Note:** [Any clarifications]
 
@@ -906,9 +969,9 @@ Structure your answer:
 **Answer:** [Brief overview with citation]
 
 **Key Points:**
-- Point 1: [explanation] [KG: entity]
-- Point 2: [explanation]
-- Point 3: [explanation] [KG: entity]
+• Point 1: [explanation] [KG: entity]
+• Point 2: [explanation]
+• Point 3: [explanation] [KG: entity]
 
 **Important:** [Any key notes]
 
@@ -969,7 +1032,9 @@ def answer_with_kg(q, G, by_id, name_index, llm_client, hops=1, k_suggest=20, k_
 
 """## Vector Store Retrieval"""
 
-_Q_CACHE, _HITS_CACHE = {}, {}
+# Global caches with size limits and TTL
+_Q_CACHE = LRUCache()  # Uses settings defaults
+_HITS_CACHE = LRUCache(max_size=500, ttl=1800)  # 30 minutes TTL for hits
 
 def programmatic_search(client, vs_id, q, k=3):
     res = client.vector_stores.search(vector_store_id=vs_id, query=q)
@@ -988,18 +1053,22 @@ def programmatic_search(client, vs_id, q, k=3):
     return items[:k]
 
 def retrieve_parallel(client, vs_id, queries, k_each=3, max_workers=6):
-    uniq = [q for q in queries if q and q not in _Q_CACHE]
+    uniq = [q for q in queries if q and not _Q_CACHE.get(q)]
     for q in uniq:
-        _Q_CACHE[q] = True
+        _Q_CACHE.set(q, True)
 
     def _fetch(q):
-        if q in _HITS_CACHE:
-            return _HITS_CACHE[q]
+        cached_hits = _HITS_CACHE.get(q)
+        if cached_hits is not None:
+            return cached_hits
         try:
             hits = programmatic_search(client, vs_id, q, k=k_each)
-        except Exception:
+        except Exception as e:
+            import logging
+            log = logging.getLogger(__name__)
+            log.warning(f"Vector search failed for query '{q[:50]}...': {e}")
             hits = []
-        _HITS_CACHE[q] = hits
+        _HITS_CACHE.set(q, hits)
         return hits
 
     pool = []
@@ -1671,15 +1740,14 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
             "ANSWER TEMPLATE:\n"
             "**Overview:** [2-3 sentence introduction] [1]\n\n"
 
-            "**Main Findings:**\n"
-            "Key Point: [Context for this section]\n"
-            "• Finding 1: [explanation with details] [2]\n"
-            "• Finding 2: [explanation with details] [KG: entity]\n"
-            "• Finding 3: [explanation with details] [3]\n\n"
+            "**Key Information:**\n"
+            "• [explanation with details] [2]\n"
+            "• [explanation with details] [KG: entity]\n"
+            "• [explanation with details] [3]\n\n"
 
-            "**Additional Details:**\n"
-            "• Detail 1: [information] [1]\n"
-            "• Detail 2: [information] [4]\n"
+            "**Important Details:**\n"
+            "• [information] [1]\n"
+            "• [information] [4]\n"
             "  - Sub-point A\n"
             "  - Sub-point B\n\n"
 
@@ -2125,6 +2193,7 @@ def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks
         "files_to_citation_indices": file_to_idxs,
         "provenance_from_kg": prov,
         "model_used": model,
+        "mode": mode,
         "prompt_chars": len(system_msg) + len(user_msg)
     }
 
@@ -2142,7 +2211,7 @@ def to_superscript_anchors(answer_text, idx_to_src):
 
     return re.sub(r"\[(\d+)\]", repl, answer_text)
 
-def export_markdown(final, question, save_dir="/content/drive/MyDrive/Wealth EKG/Product EKG/outputs"):
+def export_markdown(final, question, save_dir=None):
     answer = final.get("answer", "") or ""
     idx_to_src = final.get("citation_index_to_source", {}) or {}
     files_to_idxs = final.get("files_to_citation_indices", {}) or {}
@@ -2175,6 +2244,8 @@ def export_markdown(final, question, save_dir="/content/drive/MyDrive/Wealth EKG
 
     md_text = "\n".join(lines)
 
+    if not save_dir:
+        save_dir = os.getenv("EKG_EXPORT_DIR") or os.path.join(os.getcwd(), "outputs")
     os.makedirs(save_dir, exist_ok=True)
     slug = _slugify(question or "answer")
     outpath = os.path.join(save_dir, f"{slug}--{datetime.now().strftime('%Y%m%d-%H%M')}.md")
@@ -2513,43 +2584,53 @@ def make_quiz_app_with_questions(questions):
 
 #     return demo
 
-"""# Load KG
-
-## Load Knowledge Graph
+"""
+Note:
+The following repository originally included a notebook-exported block that attempted to
+load a knowledge graph and construct a global `G`, `by_id`, and `name_index` at import time.
+That behavior is inappropriate for a library module and breaks API startup when those files
+or constants (e.g., BASE_FOLDER) are not present. The execution block has been removed to
+avoid side effects on import. The API layer is responsible for loading artifacts on demand
+and passing them into the functions defined here.
 """
 
-with open(os.path.join(BASE_FOLDER, "master_knowledge_graph.json"), "r") as f:
-    KG = json.load(f)
-
-nodes = KG.get("nodes", [])
-edges = KG.get("edges", [])
-print(f"Loaded {len(nodes)} nodes and {len(edges)} edges")
-
-"""## Build Indexes"""
-
-by_id = {}
-name_index = defaultdict(list)
-
-for n in nodes:
-    nid = n["id"]
-    by_id[nid] = n
-    names = [n.get("name", "")] + n.get("aliases", [])
-    for t in names:
-        if t:
-            name_index[_norm(t)].append(nid)
-
-print(f"Indexed {len(by_id)} nodes, {len(name_index)} names/aliases")
-
-"""## Build NetworkX Graph"""
-
-G = nx.MultiDiGraph()
-for n in nodes:
-    G.add_node(n["id"], **n)
-
-for e in edges:
-    u, v = e["source_id"], e["target_id"]
-    attrs = e.get("properties", {}).copy()
-    attrs["type"] = e.get("type")
-    G.add_edge(u, v, **attrs)
-
-print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+def load_kg_from_json(kg_path: str):
+    """
+    Load knowledge graph from JSON file. This is the original loading logic
+    from the notebook, extracted into a reusable function.
+    
+    Returns: (G, by_id, name_index) tuple
+    """
+    with open(kg_path, "r", encoding="utf-8") as f:
+        KG = json.load(f)
+    
+    nodes = KG.get("nodes", [])
+    edges = KG.get("edges", [])
+    
+    # Build by_id index
+    by_id = {}
+    for n in nodes:
+        nid = n["id"]
+        by_id[nid] = n
+    
+    # Build name_index
+    name_index = defaultdict(list)
+    for n in nodes:
+        nid = n["id"]
+        names = [n.get("name", "")] + n.get("aliases", [])
+        for t in names:
+            if t:
+                name_index[_norm(t)].append(nid)
+    
+    # Build NetworkX graph
+    G = nx.MultiDiGraph()
+    for n in nodes:
+        G.add_node(n["id"], **n)
+    
+    for e in edges:
+        u, v = e["source_id"], e["target_id"]
+        attrs = e.get("properties", {}).copy() if "properties" in e else {}
+        attrs["type"] = e.get("type", "RELATED")
+        G.add_edge(u, v, **attrs)
+    
+    return G, by_id, dict(name_index)
