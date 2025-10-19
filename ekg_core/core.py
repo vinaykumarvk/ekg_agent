@@ -947,18 +947,18 @@ Structure your answer comprehensively:
 
 **Overview:** [Brief definition with citation]
 
-**Main Points:**
-• Point 1: [detailed explanation] [KG: entity]
+**Main Information:**
+• [detailed explanation] [KG: entity]
   - Sub-detail A
   - Sub-detail B
-• Point 2: [detailed explanation] [KG: entity]
-• Point 3: [detailed explanation]
+• [detailed explanation] [KG: entity]
+• [detailed explanation]
 
 **Key Insights:**
 • Insight 1
 • Insight 2
 
-**Note:** [Any clarifications]
+**Important:** [Any clarifications]
 
 Use ALL evidence provided. Be thorough. Do not invent."""
 
@@ -975,10 +975,10 @@ Use ALL evidence provided. Be thorough. Do not invent."""
 Structure your answer:
 **Answer:** [Brief overview with citation]
 
-**Key Points:**
-• Point 1: [explanation] [KG: entity]
-• Point 2: [explanation]
-• Point 3: [explanation] [KG: entity]
+**Key Information:**
+• [explanation] [KG: entity]
+• [explanation]
+• [explanation] [KG: entity]
 
 **Important:** [Any key notes]
 
