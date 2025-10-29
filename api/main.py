@@ -35,7 +35,7 @@ logging.basicConfig(
 log = logging.getLogger("ekg_agent")  # Application-specific logger
 app = FastAPI(title="KG Vector Response API", version="2.0.0")
 
-# Request timeout configuration (5 minutes for deep mode)
+# Request timeout configuration (30 minutes for deep mode)
 REQUEST_TIMEOUT = 1800  # 30 minutes
 
 # Request metrics
