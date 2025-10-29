@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 from pydantic import validator
 import os
 
+
 class Settings(BaseSettings):
     OPENAI_API_KEY: str
     MODEL_DEFAULT: str = "gpt-4o"
