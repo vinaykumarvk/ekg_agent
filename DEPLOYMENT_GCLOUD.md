@@ -65,7 +65,7 @@ gcloud run deploy ekg-agent \
   --set-secrets OPENAI_API_KEY=openai-api-key:latest \
   --memory 2Gi \
   --cpu 2 \
-  --timeout 300 \
+  --timeout 1800 \
   --max-instances 10 \
   --min-instances 0
 
@@ -119,7 +119,7 @@ gcloud run deploy $SERVICE_NAME \
   --set-secrets OPENAI_API_KEY=openai-api-key:latest \
   --memory 2Gi \
   --cpu 2 \
-  --timeout 300
+  --timeout 1800
 
 SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region $REGION --format 'value(status.url)')
 
@@ -151,7 +151,7 @@ EKG_EXPORT_DIR=/tmp/outputs
 Recommended settings:
 - **Memory:** 2Gi (for both KGs in cache)
 - **CPU:** 2
-- **Timeout:** 300s (5 min for complex queries)
+- **Timeout:** 1800s (30 min for complex queries)
 - **Max Instances:** 10 (adjust based on traffic)
 - **Min Instances:** 0 (cost-saving) or 1 (low latency)
 
@@ -341,7 +341,9 @@ gcloud run services logs tail ekg-agent --region $REGION
 ```bash
 gcloud run services update ekg-agent \
   --region $REGION \
-  --timeout 300
+  --timeout 1800
+
+If you are deploying via Cloud Build triggers or CI/CD pipelines, make sure the `gcloud run deploy` or `gcloud run services update` command in your pipeline also includes `--timeout 1800`; setting the build step `timeout:` field alone does not change the Cloud Run service timeout.
 ```
 
 ### Issue: Memory errors

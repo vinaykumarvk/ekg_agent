@@ -38,7 +38,7 @@ gcloud run deploy ekg-agent \
   --allow-unauthenticated \
   --memory 2Gi \
   --cpu 2 \
-  --timeout 300 \
+  --timeout 1800 \
   --max-instances 10 \
   --min-instances 0 \
   --set-env-vars "OPENAI_API_KEY=$OPENAI_API_KEY,CACHE_DIR=/tmp/ekg_cache,LOG_LEVEL=INFO"
@@ -78,7 +78,7 @@ curl -X POST $SERVICE_URL/v1/answer \
 
 - **Memory**: 2Gi (recommended for deep mode)
 - **CPU**: 2 (for better performance)
-- **Timeout**: 300s (5 minutes for deep mode)
+- **Timeout**: 1800s (30 minutes for deep mode)
 - **Max Instances**: 10 (adjust based on usage)
 - **Min Instances**: 0 (scale to zero when idle)
 
@@ -139,8 +139,8 @@ gcloud run deploy ekg-agent \
    - Verify environment variables are set correctly
 
 2. **Timeout errors**
-   - Deep mode can take up to 5 minutes
-   - Ensure timeout is set to 300s or higher
+  - Deep mode can take up to 30 minutes for very large jobs
+  - Ensure timeout is set to 1800s (or your desired limit) in every `gcloud run deploy`/`gcloud run services update` command
 
 3. **Memory issues**
    - Increase memory allocation
