@@ -120,13 +120,64 @@ class LRUCache:
         with self._lock:
             return len(self.cache)
 
+_EMBED_CACHE_LOCK = threading.Lock()
+_EMBED_CACHE_MAX = 512
+_EMBED_CACHE = OrderedDict()
+
+
+def _cache_embedding(key, value):
+    with _EMBED_CACHE_LOCK:
+        if key in _EMBED_CACHE:
+            _EMBED_CACHE.move_to_end(key)
+        _EMBED_CACHE[key] = value
+        while len(_EMBED_CACHE) > _EMBED_CACHE_MAX:
+            _EMBED_CACHE.popitem(last=False)
+
+
+def _get_cached_embedding(key):
+    with _EMBED_CACHE_LOCK:
+        cached = _EMBED_CACHE.get(key)
+        if cached is None:
+            return None
+        _EMBED_CACHE.move_to_end(key)
+        return cached
+
+
+def get_embeddings(client, texts, model="text-embedding-3-small"):
+    """Return embeddings for one or many texts with basic memoization."""
+    if isinstance(texts, str):
+        single = True
+        texts = [texts]
+    else:
+        single = False
+
+    results = [None] * len(texts)
+    to_fetch = []
+    fetch_indices = []
+
+    for idx, text in enumerate(texts):
+        key = (model, text)
+        cached = _get_cached_embedding(key)
+        if cached is not None:
+            results[idx] = cached
+        else:
+            fetch_indices.append(idx)
+            to_fetch.append(text)
+
+    if to_fetch:
+        response = client.embeddings.create(model=model, input=to_fetch)
+        for idx, data in zip(fetch_indices, response.data):
+            embedding = np.array(data.embedding, dtype=np.float32)
+            key = (model, texts[idx])
+            _cache_embedding(key, embedding)
+            results[idx] = embedding
+
+    return results[0] if single else results
+
+
 def get_question_embedding(client, question):
     """Get embedding for semantic similarity"""
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=question
-    )
-    return np.array(response.data[0].embedding)
+    return get_embeddings(client, question)
 
 def cosine_similarity(a, b):
     """Calculate cosine similarity between two vectors"""
@@ -271,13 +322,13 @@ ANSWER_PRESETS = {
     },
     "deep": {
         "hops": 2,
-        "k_suggest": 35,
-        "k_candidates": 40,
-        "max_chunks": 22,
-        "k_each": 8,
+        "k_suggest": 28,
+        "k_candidates": 32,
+        "max_chunks": 15,
+        "k_each": 5,
         "lambda_div": 0.75,
         "max_tokens": 20000,
-        "max_expanded": 120,
+        "max_expanded": 80,
         "model": "gpt-5",
         "_mode": "deep"
     }
@@ -815,20 +866,38 @@ def verify_answer_grounding(answer_text, chunks, client, threshold=0.50):
     sample_size = min(15, len(sentences))
     sampled_sentences = sentences[:sample_size]
 
-    for sentence in sampled_sentences:
-        # Get embedding for sentence
-        sent_embedding = get_question_embedding(client, sentence)
+    sentence_embeddings = get_embeddings(client, sampled_sentences)
 
-        # Check if any chunk supports this sentence
-        max_similarity = 0
-        for chunk in chunks[:10]:  # Check top 10 chunks only
-            chunk_text = chunk.get("text", "")
-            if not chunk_text:
-                continue
+    top_chunks = []
+    for chunk in chunks[:10]:
+        chunk_text = chunk.get("text", "")
+        if not chunk_text:
+            continue
 
-            chunk_embedding = get_question_embedding(client, chunk_text[:500])
-            similarity = cosine_similarity(sent_embedding, chunk_embedding)
-            max_similarity = max(max_similarity, similarity)
+        cached_embedding = chunk.get("_embedding")
+        if cached_embedding is None or chunk.get("_embedding_source") != chunk_text[:CHUNK_EMBED_MAX_CHARS]:
+            cached_embedding = get_question_embedding(client, chunk_text[:CHUNK_EMBED_MAX_CHARS])
+            chunk["_embedding"] = cached_embedding
+            chunk["_embedding_source"] = chunk_text[:CHUNK_EMBED_MAX_CHARS]
+
+        top_chunks.append(cached_embedding)
+
+    if not top_chunks:
+        return {
+            "confidence": 0.0,
+            "supported_count": 0,
+            "total_claims": len(sampled_sentences),
+            "unsupported_claims": sampled_sentences[:3]
+        }
+
+    chunk_matrix = np.stack(top_chunks)
+    chunk_norms = np.linalg.norm(chunk_matrix, axis=1)
+    chunk_norms[chunk_norms == 0] = 1.0
+
+    for sentence, sent_embedding in zip(sampled_sentences, sentence_embeddings):
+        sent_norm = np.linalg.norm(sent_embedding) or 1.0
+        similarities = chunk_matrix @ sent_embedding / (chunk_norms * sent_norm)
+        max_similarity = float(np.max(similarities))
 
         if max_similarity >= threshold:
             supported_count += 1
@@ -1169,6 +1238,9 @@ def mmr_merge(pool, k_final=10, lambda_div=0.4):
 
     return selected
 
+CHUNK_EMBED_MAX_CHARS = 800
+
+
 def rerank_chunks_by_relevance(client, question, chunks, top_k=None, min_chunks=6):
     """
     Re-rank retrieved chunks by actual relevance to the main question
@@ -1179,6 +1251,7 @@ def rerank_chunks_by_relevance(client, question, chunks, top_k=None, min_chunks=
 
     # Get question embedding
     q_embedding = get_question_embedding(client, question)
+    q_norm = np.linalg.norm(q_embedding) or 1.0
 
     # Score each chunk
     for chunk in chunks:
@@ -1188,10 +1261,17 @@ def rerank_chunks_by_relevance(client, question, chunks, top_k=None, min_chunks=
             continue
 
         # Get chunk embedding
-        chunk_embedding = get_question_embedding(client, chunk_text[:1000])
+        cached_embedding = chunk.get("_embedding")
+        if cached_embedding is None or chunk.get("_embedding_source") != chunk_text[:CHUNK_EMBED_MAX_CHARS]:
+            cached_embedding = get_question_embedding(client, chunk_text[:CHUNK_EMBED_MAX_CHARS])
+            chunk["_embedding"] = cached_embedding
+            chunk["_embedding_source"] = chunk_text[:CHUNK_EMBED_MAX_CHARS]
+
+        chunk_embedding = cached_embedding
+        chunk_norm = np.linalg.norm(chunk_embedding) or 1.0
 
         # Calculate relevance (cosine similarity)
-        relevance = cosine_similarity(q_embedding, chunk_embedding)
+        relevance = float(np.dot(q_embedding, chunk_embedding) / (q_norm * chunk_norm))
 
         # Combine with original score (if exists)
         original_score = chunk.get("norm_score", 0.5)
@@ -2165,12 +2245,33 @@ def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks
     reformulations.append(f"{q} requirements rules conditions")
     reformulations.append(f"{q} process workflow steps")
 
-    all_queries = subqs[:]
-    for ref in reformulations:
-        if ref and ref not in all_queries and len(all_queries) < 10:
-            all_queries.append(ref)
+    seen_queries = set()
+    all_queries = []
 
-    subqs = all_queries[:10]
+    for candidate in [q] + (subqs or []):
+        if not candidate:
+            continue
+        key = _norm(candidate)
+        if key in seen_queries:
+            continue
+        seen_queries.add(key)
+        all_queries.append(candidate)
+        if len(all_queries) >= 10:
+            break
+
+    if len(all_queries) < 10:
+        for ref in reformulations:
+            if not ref:
+                continue
+            key = _norm(ref)
+            if key in seen_queries:
+                continue
+            seen_queries.add(key)
+            all_queries.append(ref)
+            if len(all_queries) >= 10:
+                break
+
+    subqs = all_queries
 
     print(f"  → Generated {len(subqs)} sub-queries")
     for i, sq in enumerate(subqs, 1):
