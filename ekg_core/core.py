@@ -946,17 +946,17 @@ def grounded_answer_llm(q, nodes, edges, by_id, llm_client, model="gpt-4o", max_
             "Use ONLY the provided graph context.\n\n"
             "CRITICAL FORMATTING REQUIREMENTS:\n"
             "1. ATTRIBUTION: Include citations [1], [2] for key claims\n"
-            "2. STRUCTURE: Use clean bullet points (•) for key information\n"
+            "2. STRUCTURE: Use 3-5 bullet points (•) with descriptive lead-ins; avoid labels like 'Point 1'\n"
             "3. CLARITY: Maximum 20 words per sentence\n"
-            "4. LENGTH: Keep total answer under 250 words\n"
-            "5. PROFESSIONAL: Write like a business document for analysts\n\n"
+            "4. PROFESSIONAL TONE: Sound like a business analyst briefing stakeholders\n"
+            "5. LENGTH: Keep total answer under 250 words\n\n"
             "ANSWER TEMPLATE:\n"
-            "**Answer:** [2-5 sentence summary] [1]\n\n"
-            "**Key Information:**\n"
-            "• [brief detail] [2]\n"
-            "• [brief detail]\n"
-            "• [brief detail] [1]\n\n"
-            "**Important:** [Any important clarification]\n\n"
+            "**Executive Summary:** [2-5 sentence overview] [1]\n\n"
+            "**Key Points:**\n"
+            "• [Process highlight with citation] [2]\n"
+            "• [Customer or system impact]\n"
+            "• [Risk or dependency] [1]\n\n"
+            "**Business Note:** [Important clarification or next step]\n\n"
             "Every factual statement should have a citation. "
         )
     elif mode == "deep":
@@ -985,19 +985,19 @@ def grounded_answer_llm(q, nodes, edges, by_id, llm_client, model="gpt-4o", max_
             "   - Cover ALL details from sources\n"
             "   - Include ALL rules, conditions, and exceptions mentioned\n\n"
             "ANSWER STRUCTURE:\n"
-            "**Overview:** [3-5 sentence definition] [1]\n\n"
-            "**1. Main Topic**\n"
-            "Important: [Introduction] [2]\n"
-            "• [detailed explanation] [3]\n"
+            "**Executive Overview:** [3-5 sentence definition] [1]\n\n"
+            "**1. Core Process Area**\n"
+            "Important: [Section focus] [2]\n"
+            "• Insight: [Detailed explanation] [3]\n"
             "  - Sub-detail A\n"
             "  - Sub-detail B\n"
-            "• [detailed explanation] [KG: entity] [4]\n\n"
-            "**2. Second Topic**\n"
+            "• Consideration: [Detailed explanation] [KG: entity] [4]\n\n"
+            "**2. Supporting Area**\n"
             "Note: [Key insight]\n"
-            "• [comprehensive detail] [1]\n"
-            "• [comprehensive detail] [5]\n\n"
+            "• Detail: [Comprehensive explanation] [1]\n"
+            "• Detail: [Comprehensive explanation] [5]\n\n"
             "[Continue with 3-6 more sections following this pattern]\n\n"
-            "**Key Insights:**\n"
+            "**Key Points:**\n"
             "• Critical takeaway 1\n"
             "• Critical takeaway 2\n\n"
             "Follow this pattern. Cite EVERY factual claim. "
@@ -1009,17 +1009,22 @@ def grounded_answer_llm(q, nodes, edges, by_id, llm_client, model="gpt-4o", max_
             "Use ONLY the provided graph context.\n\n"
             "CRITICAL FORMATTING REQUIREMENTS:\n"
             "1. ATTRIBUTION: Include citations [1], [2], [3] for key claims\n"
-            "2. STRUCTURE: Use clean bullet points (•) for key information\n"
+            "2. STRUCTURE: Use organised bullet lists with descriptive lead-ins; avoid numbered labels like 'Point 1'\n"
             "3. CLARITY: Maximum 25 words per sentence\n"
-            "4. PROFESSIONAL: Write like a business document for analysts\n"
-            "5. MARKERS: Use 'Important:', 'Note:', 'Example:' sparingly and professionally\n\n"
+            "4. PROFESSIONAL TONE: Write as a business analyst providing decision-ready insight\n"
+            "5. MARKERS: Use 'Important:', 'Note:', 'Example:' only when they add clarity\n\n"
             "ANSWER TEMPLATE:\n"
-            "**Overview:** [3-5 sentence summary] [1]\n\n"
-            "**Key Information:**\n"
-            "• [detailed explanation] [2]\n"
-            "• [detailed explanation] [3]\n"
-            "• [detailed explanation] [1]\n\n"
-            "**Important:** [Any important clarification]\n\n"
+            "**Executive Summary:** [3-5 sentence summary] [1]\n\n"
+            "**Key Points:**\n"
+            "• [Primary process insight] [2]\n"
+            "• [Control or system consideration] [3]\n"
+            "• [Client or compliance impact] [1]\n\n"
+            "**Process Details:**\n"
+            "• [Supporting information] [1]\n"
+            "• [Supporting information] [4]\n"
+            "  - Sub-point A\n"
+            "  - Sub-point B\n\n"
+            "**Business Note:** [Key considerations or follow-ups]\n\n"
         )
 
     # Mode-specific user message templates
@@ -1033,13 +1038,15 @@ def grounded_answer_llm(q, nodes, edges, by_id, llm_client, model="gpt-4o", max_
 ## KG Edges
 {json.dumps(compact_edges[:40], ensure_ascii=False)}
 
-Structure your answer:
-**Answer:** [1-2 sentences with citation]
+Structure your answer for business analysts:
+**Executive Summary:** [1-2 sentences with citation]
 
-**Key Information:**
-• [brief detail] [KG: entity]
-• [brief detail]
-• [brief detail]
+**Key Points:**
+• [Insight tailored for stakeholders] [KG: entity]
+• [Supporting detail]
+• [Risk or dependency]
+
+**Business Note:** [Important clarification or action]
 
 Use evidence provided. Do not invent."""
 
@@ -1053,22 +1060,26 @@ Use evidence provided. Do not invent."""
 ## KG Edges
 {json.dumps(compact_edges[:40], ensure_ascii=False)}
 
-Structure your answer comprehensively:
+Structure your answer comprehensively for business analysts:
 
-**Overview:** [Brief definition with citation]
+**Executive Overview:** [Brief definition with citation]
 
-**Main Information:**
-• [detailed explanation] [KG: entity]
+**1. Core Process Areas:**
+• [Detailed explanation] [KG: entity]
   - Sub-detail A
   - Sub-detail B
-• [detailed explanation] [KG: entity]
-• [detailed explanation]
+• [Detailed explanation] [KG: entity]
+• [Detailed explanation]
 
-**Key Insights:**
+**2. Additional Considerations:**
+• [Supporting dimension] [KG: entity]
+• [Exception or edge case]
+
+**Key Points:**
 • Insight 1
 • Insight 2
 
-**Important:** [Any clarifications]
+**Business Notes:** [Clarifications or follow-ups]
 
 Use ALL evidence provided. Be thorough. Do not invent."""
 
@@ -1082,15 +1093,20 @@ Use ALL evidence provided. Be thorough. Do not invent."""
 ## KG Edges
 {json.dumps(compact_edges[:40], ensure_ascii=False)}
 
-Structure your answer:
-**Answer:** [Brief overview with citation]
+Structure your answer for business analysts:
+**Executive Summary:** [Brief overview with citation]
 
-**Key Information:**
-• [explanation] [KG: entity]
-• [explanation]
-• [explanation] [KG: entity]
+**Key Points:**
+• [Explanation for business analysts] [KG: entity]
+• [Explanation]
+• [Explanation] [KG: entity]
 
-**Important:** [Any key notes]
+**Process Details:**
+• [Key operational note]
+• [Key control or metric]
+  - Supporting detail
+
+**Business Note:** [Any key notes]
 
 Use evidence provided. Do not invent."""
 
@@ -1778,18 +1794,18 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
 
             "CRITICAL FORMATTING REQUIREMENTS:\n"
             "1. ATTRIBUTION: Include citations [1], [2] for key claims\n"
-            "2. STRUCTURE: Use 3-5 bullet points (•) for key information\n"
-            "3. MARKERS: Use 'Important:' sparingly and professionally\n"
+            "2. STRUCTURE: Use 3-5 bullet points (•) with descriptive lead-ins; avoid labels like 'Point 1'\n"
+            "3. TONE: Write like a business analyst preparing a stakeholder brief\n"
             "4. CLARITY: Maximum 20 words per sentence\n"
             "5. LENGTH: Keep total answer under 250 words\n\n"
 
             "ANSWER TEMPLATE:\n"
-            "**Answer:** [2-5 sentence summary] [1]\n\n"
-            "**Key Information:**\n"
-            "• [brief detail] [2]\n"
-            "• [brief detail]\n"
-            "• [brief detail] [1]\n\n"
-            "**Important:** [Any important clarification]\n\n"
+            "**Executive Summary:** [2-5 sentence overview] [1]\n\n"
+            "**Key Points:**\n"
+            "• [Process highlight with citation] [2]\n"
+            "• [Customer or system impact]\n"
+            "• [Risk or dependency] [1]\n\n"
+            "**Business Note:** [Important clarification or next step]\n\n"
 
             "Every factual statement should have a citation. "
         )
@@ -1822,19 +1838,19 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
             "   - Include ALL rules, conditions, and exceptions mentioned\n\n"
 
             "ANSWER STRUCTURE:\n"
-            "**Overview:** [3-5 sentence definition] [1]\n\n"
-            "**1. Main Topic**\n"
-            "Key Point: [Introduction] [2]\n"
-            "• Finding 1: [detailed explanation] [3]\n"
+            "**Executive Overview:** [3-5 sentence definition] [1]\n\n"
+            "**1. Core Process Area**\n"
+            "Important: [Section focus] [2]\n"
+            "• Insight: [Detailed explanation] [3]\n"
             "  - Sub-detail A\n"
             "  - Sub-detail B\n"
-            "• Finding 2: [detailed explanation] [KG: entity] [4]\n\n"
-            "**2. Second Topic**\n"
-            "Important: [Key insight]\n"
-            "• Point A: [comprehensive detail] [1]\n"
-            "• Point B: [comprehensive detail] [5]\n\n"
+            "• Consideration: [Detailed explanation] [KG: entity] [4]\n\n"
+            "**2. Supporting Area**\n"
+            "Note: [Key insight]\n"
+            "• Detail: [Comprehensive explanation] [1]\n"
+            "• Detail: [Comprehensive explanation] [5]\n\n"
             "[Continue with 3-6 more sections following this pattern]\n\n"
-            "**Key Insights:**\n"
+            "**Key Points:**\n"
             "• Critical takeaway 1\n"
             "• Critical takeaway 2\n\n"
 
@@ -1853,12 +1869,11 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
             "   - Also cite KG entities as [KG: entity_name]\n"
             "   - Every key fact needs a citation\n"
             "2. STRUCTURE:\n"
-            "   - Use bullet points (•) extensively for lists and findings\n"
+            "   - Use bullet points (•) with descriptive lead-ins; avoid numbered labels like 'Point 1'\n"
             "   - Use sub-bullets (  -) where appropriate\n"
             "   - Create 3-5 clear sections or logical groups\n"
-            "3. MARKERS:\n"
-            "   - Add 3-5 markers: 'Key Point:', 'Note:', 'Important:', 'Example:'\n"
-            "   - Use markers to highlight critical information\n"
+            "3. TONE:\n"
+            "   - Write as a business analyst summarising implications and next steps\n"
             "4. CLARITY:\n"
             "   - Maximum 25 words per sentence\n"
             "   - One main idea per sentence\n"
@@ -1866,20 +1881,20 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
             "5. LENGTH: 400-800 words typically\n\n"
 
             "ANSWER TEMPLATE:\n"
-            "**Overview:** [2-3 sentence introduction] [1]\n\n"
+            "**Executive Summary:** [2-3 sentence introduction] [1]\n\n"
 
-            "**Key Information:**\n"
-            "• [explanation with details] [2]\n"
-            "• [explanation with details] [KG: entity]\n"
-            "• [explanation with details] [3]\n\n"
+            "**Key Points:**\n"
+            "• [Explanation with details] [2]\n"
+            "• [Explanation with details] [KG: entity]\n"
+            "• [Explanation with details] [3]\n\n"
 
-            "**Important Details:**\n"
-            "• [information] [1]\n"
-            "• [information] [4]\n"
+            "**Process Details:**\n"
+            "• [Information] [1]\n"
+            "• [Information] [4]\n"
             "  - Sub-point A\n"
             "  - Sub-point B\n\n"
 
-            "**Important:** [Key notes or considerations]\n\n"
+            "**Business Note:** [Key notes or considerations]\n\n"
 
             "Every factual statement MUST have a citation. "
         )
