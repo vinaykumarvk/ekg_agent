@@ -15,19 +15,50 @@ def run_vector_answer(
         k_each = preset_params.get("k_each", k_each)
         lambda_div = preset_params.get("lambda_div", lambda_div)
         model = preset_params.get("model", model)
-        mode  = preset_params.get("_mode", "balanced")
+        mode = preset_params.get("_mode", "balanced")
+        max_subqueries = preset_params.get("max_subqueries", 8)
+        retrieval_workers = preset_params.get("retrieval_workers", 6)
+        min_chunks = preset_params.get("min_chunks", max(6, max_chunks//2))
     else:
         mode, model = "balanced", (model or "gpt-4o")
+        max_subqueries = 8
+        retrieval_workers = 6
+        min_chunks = max(6, max_chunks//2)
 
     if kg_result:
-        ents, _ = kg_anchors(kg_result.get("resolved_entities"), kg_result.get("supporting_edges"), kg_result.get("by_id", {}))
-        subqs   = list({q, f"Explain: {q}", f"Summarize: {q}"} | set(expand_queries_from_kg(q, ents, kg_result.get("supporting_edges"))))
+        ents, _ = kg_anchors(
+            kg_result.get("resolved_entities"),
+            kg_result.get("supporting_edges"),
+            kg_result.get("by_id", {})
+        )
+        kg_queries = expand_queries_from_kg(
+            q, ents, kg_result.get("supporting_edges"), k_max=max_subqueries
+        )
     else:
-        subqs   = [q, f"Explain: {q}", f"Summarize: {q}"]
+        kg_queries = []
 
-    pool    = retrieve_parallel(client, vs_id, subqs, k_each=k_each)
+    seed_queries = [q, f"Explain: {q}", f"Summarize: {q}"]
+    subqs = []
+    seen = set()
+    for candidate in seed_queries + kg_queries:
+        if not candidate:
+            continue
+        key = candidate.strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        subqs.append(candidate)
+        if len(subqs) >= max_subqueries:
+            break
+
+    if not subqs:
+        subqs = [q]
+
+    pool = retrieve_parallel(client, vs_id, subqs, k_each=k_each, max_workers=retrieval_workers)
     curated = mmr_merge(pool, k_final=max_chunks*5, lambda_div=lambda_div)
-    curated = rerank_chunks_by_relevance(client, q, curated, top_k=max_chunks, min_chunks=max(6, max_chunks//2))
+    curated = rerank_chunks_by_relevance(
+        client, q, curated, top_k=max_chunks, min_chunks=min_chunks
+    )
     curated = expand_chunk_context(curated)
 
     system_msg, user_msg = build_grounded_messages(question=q, compact_nodes=[], compact_edges=[],
