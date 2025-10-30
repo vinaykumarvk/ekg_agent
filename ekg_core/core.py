@@ -28,6 +28,7 @@ import threading
 import json
 import re
 import os
+import textwrap
 from datetime import datetime
 from collections import defaultdict, Counter, deque
 from typing import Dict, Any, List, Tuple, Iterable, Set
@@ -306,7 +307,12 @@ ANSWER_PRESETS = {
         "max_tokens": 1500,
         "max_expanded": 40,
         "model": "gpt-5-nano",
-        "_mode": "concise"
+        "_mode": "concise",
+        "chunk_char_limit": 900,
+        "chunk_sentence_limit": 6,
+        "max_subqueries": 6,
+        "retrieval_workers": 4,
+        "min_chunks": 4
     },
     "balanced": {
         "hops": 1,
@@ -318,7 +324,12 @@ ANSWER_PRESETS = {
         "max_tokens": 6000,
         "max_expanded": 60,
         "model": "gpt-5-mini",
-        "_mode": "balanced"
+        "_mode": "balanced",
+        "chunk_char_limit": 1400,
+        "chunk_sentence_limit": 10,
+        "max_subqueries": 8,
+        "retrieval_workers": 6,
+        "min_chunks": 6
     },
     "deep": {
         "hops": 2,
@@ -330,7 +341,12 @@ ANSWER_PRESETS = {
         "max_tokens": 20000,
         "max_expanded": 80,
         "model": "gpt-5",
-        "_mode": "deep"
+        "_mode": "deep",
+        "chunk_char_limit": 2200,
+        "chunk_sentence_limit": 16,
+        "max_subqueries": 10,
+        "retrieval_workers": 8,
+        "min_chunks": 8
     }
 }
 
@@ -1325,6 +1341,108 @@ def expand_chunk_context(chunks):
 
 """## Hybrid Pipeline Helpers"""
 
+_STOPWORDS = {
+    "the", "and", "that", "with", "from", "this", "have", "will", "could",
+    "would", "should", "shall", "there", "their", "which", "about",
+    "these", "those", "into", "through", "while", "where", "when", "what",
+    "your", "does", "each", "such", "being", "also", "only", "over",
+    "other", "under", "after", "before", "because", "between", "within"
+}
+
+_SEGMENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _keyword_set(text: str) -> Set[str]:
+    return {
+        w for w in re.findall(r"\b\w+\b", (text or "").lower())
+        if len(w) > 3 and w not in _STOPWORDS
+    }
+
+
+def _smart_trim_passage(text: str, question: str, char_limit: int, max_segments: int) -> str:
+    """Trim passages to fit mode-specific budgets while keeping salient details."""
+    if not text:
+        return ""
+
+    clean_text = text.strip()
+    if not clean_text:
+        return ""
+
+    segments = [seg.strip() for seg in _SEGMENT_SPLIT_RE.split(clean_text) if seg.strip()]
+
+    # Fast path when text already within budgets
+    if (not char_limit or len(clean_text) <= char_limit) and (
+        not max_segments or len(segments) <= max_segments
+    ):
+        return clean_text
+
+    keywords = _keyword_set(question)
+    if not keywords:
+        keywords = _keyword_set(clean_text)
+
+    scored_indices = []
+    for idx, seg in enumerate(segments):
+        words = set(re.findall(r"\b\w+\b", seg.lower()))
+        overlap = len(keywords & words)
+        scored_indices.append((idx, overlap, len(seg)))
+
+    # Always prefer the first segment for context
+    selected = {0}
+    if len(segments) > 1:
+        selected.add(len(segments) - 1)
+
+    # Sort by overlap (desc), then longer segments, then original order
+    for idx, overlap, seg_len in sorted(
+        scored_indices,
+        key=lambda item: (-item[1], -item[2], item[0])
+    ):
+        if idx in selected:
+            continue
+        if max_segments and len(selected) >= max_segments:
+            break
+        selected.add(idx)
+
+    ordered_indices = sorted(selected)
+
+    trimmed_segments = []
+    total_chars = 0
+
+    for idx in ordered_indices:
+        seg = segments[idx]
+        if not seg:
+            continue
+
+        projected = total_chars + len(seg) + (1 if trimmed_segments else 0)
+        if char_limit and projected > char_limit:
+            remaining = char_limit - total_chars - (1 if trimmed_segments else 0)
+            if remaining <= 0:
+                break
+            seg = textwrap.shorten(
+                seg,
+                width=max(remaining, len("…") + 1),
+                placeholder="…"
+            )
+            projected = total_chars + len(seg) + (1 if trimmed_segments else 0)
+
+        trimmed_segments.append(seg)
+        total_chars = projected
+
+        if char_limit and total_chars >= char_limit:
+            break
+        if max_segments and len(trimmed_segments) >= max_segments:
+            break
+
+    final_text = "\n".join(trimmed_segments).strip()
+
+    if not final_text:
+        return textwrap.shorten(clean_text, width=max(char_limit or 200, 120), placeholder="…")
+
+    if len(final_text) < len(clean_text):
+        if not final_text.endswith("…"):
+            final_text = final_text.rstrip(".;, -") + "…"
+
+    return final_text
+
 # # def build_grounded_prompt(question, compact_nodes, compact_edges, node_context, chunks, instruction=None, preset_params=None):
 # #     # Determine answer depth from preset
 # #     if preset_params:
@@ -1769,6 +1887,19 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
     elif mode is None:
         mode = "balanced"
 
+    # Determine passage budgets for the mode
+    default_budget = ANSWER_PRESETS.get(mode, {})
+    chunk_char_limit = 1800
+    chunk_sentence_limit = 12
+
+    if default_budget:
+        chunk_char_limit = default_budget.get("chunk_char_limit", chunk_char_limit)
+        chunk_sentence_limit = default_budget.get("chunk_sentence_limit", chunk_sentence_limit)
+
+    if preset_params:
+        chunk_char_limit = preset_params.get("chunk_char_limit", chunk_char_limit)
+        chunk_sentence_limit = preset_params.get("chunk_sentence_limit", chunk_sentence_limit)
+
     # ============= SYSTEM MESSAGE (Instructions) =============
 
     if mode == "concise":
@@ -1927,7 +2058,8 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
     user_parts.append("## Retrieved Passages")
     for i, c in enumerate(chunks, 1):
         src = c.get("filename") or c.get("file_id")
-        txt = (c.get("text") or "")[:1800]
+        raw_text = c.get("text") or ""
+        txt = _smart_trim_passage(raw_text, question, chunk_char_limit, chunk_sentence_limit)
         user_parts.append(f"[{i}] ({src})")
         user_parts.append(indent(txt))
         user_parts.append("")
@@ -2219,11 +2351,17 @@ def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks
         lambda_div = preset_params.get("lambda_div", lambda_div)
         model = preset_params.get("model", model)
         mode = preset_params.get("_mode", "balanced")
+        max_subqueries = preset_params.get("max_subqueries", 10)
+        retrieval_workers = preset_params.get("retrieval_workers", 6)
+        min_chunks = preset_params.get("min_chunks", max(6, max_chunks // 2))
     else:
         mode = "balanced"
+        max_subqueries = 10
+        retrieval_workers = 6
+        min_chunks = max(6, max_chunks // 2)
 
     ents, prov = kg_anchors(kg_result.get("resolved_entities"), kg_result.get("supporting_edges"), by_id)
-    subqs = expand_queries_from_kg(q, ents, kg_result.get("supporting_edges"))
+    subqs = expand_queries_from_kg(q, ents, kg_result.get("supporting_edges"), k_max=max_subqueries)
 
     # Add reformulated versions for better coverage
     reformulations = []
@@ -2256,10 +2394,10 @@ def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks
             continue
         seen_queries.add(key)
         all_queries.append(candidate)
-        if len(all_queries) >= 10:
+        if len(all_queries) >= max_subqueries:
             break
 
-    if len(all_queries) < 10:
+    if len(all_queries) < max_subqueries:
         for ref in reformulations:
             if not ref:
                 continue
@@ -2268,7 +2406,7 @@ def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks
                 continue
             seen_queries.add(key)
             all_queries.append(ref)
-            if len(all_queries) >= 10:
+            if len(all_queries) >= max_subqueries:
                 break
 
     subqs = all_queries
@@ -2277,7 +2415,7 @@ def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks
     for i, sq in enumerate(subqs, 1):
         print(f"     {i}. {sq[:80]}...")
 
-    pool = retrieve_parallel(client, vs_id, subqs, k_each=k_each)
+    pool = retrieve_parallel(client, vs_id, subqs, k_each=k_each, max_workers=retrieval_workers)
     print(f"  → Retrieved {len(pool)} raw chunks from vector store")
 
     if not pool:
@@ -2289,7 +2427,7 @@ def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks
     curated = rerank_chunks_by_relevance(
         client, q, curated,
         top_k=max_chunks,
-        min_chunks=max(6, max_chunks//2)
+        min_chunks=min_chunks
     )
 
     curated = expand_chunk_context(curated)
