@@ -1,0 +1,43 @@
+{% extends "layout.html" %}
+{% block title %} · Admin Login{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Administrator sign in</h2>
+  <p class="helper-text">
+    Use your administrator credentials to access vector store management. Passwords are
+    hashed using bcrypt and transmitted over TLS when deployed.
+  </p>
+  {% if error %}
+  <div class="alert alert-error" role="alert">{{ error }}</div>
+  {% endif %}
+  <form method="post" class="form" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="form-field">
+      <label for="username">Username</label>
+      <input
+        id="username"
+        type="text"
+        name="username"
+        autocomplete="username"
+        required
+        minlength="3"
+      />
+    </div>
+    <div class="form-field">
+      <label for="password">Password</label>
+      <input
+        id="password"
+        type="password"
+        name="password"
+        autocomplete="current-password"
+        required
+        minlength="8"
+      />
+    </div>
+    <div class="form-footer">
+      <button type="submit" class="btn-primary">Log in</button>
+      <a class="link-muted" href="#" aria-disabled="true">Forgot password?</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

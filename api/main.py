@@ -8,16 +8,47 @@ import logging
 import uuid
 import asyncio
 import time
+import secrets
 from functools import lru_cache
-from typing import Any, Dict, Tuple
+from pathlib import Path
+from typing import Any, Dict, Tuple, List
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    Form,
+    UploadFile,
+    File,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 from openai import OpenAI
 
-from api.schemas import AskRequest, AskResponse
+from api.schemas import (
+    AskRequest,
+    AskResponse,
+    VectorStoreUploadResponse,
+    GoogleDriveIngestRequest,
+)
 from api.settings import settings
+from api.security import (
+    verify_password,
+    generate_session_identifier,
+    generate_csrf_token,
+)
+from api.vector_store import (
+    ingest_file,
+    persist_upload,
+    REGISTRY,
+    MAX_FILE_SIZE_BYTES,
+)
+from api.google_drive import drive_client, extract_folder_id
 from agents.ekg_agent import EKGAgent
 
 # -----------------------------------------------------------------------------
@@ -34,6 +65,87 @@ logging.basicConfig(
 
 log = logging.getLogger("ekg_agent")  # Application-specific logger
 app = FastAPI(title="KG Vector Response API", version="2.0.0")
+
+BASE_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = Path(settings.CACHE_DIR) / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.SESSION_SECRET_KEY,
+    session_cookie=settings.SESSION_COOKIE_NAME,
+    https_only=settings.SESSION_COOKIE_SECURE,
+    same_site=settings.SESSION_COOKIE_SAMESITE,
+)
+
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+static_dir = BASE_DIR / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+def humanize_bytes(value: int) -> str:
+    units = ["bytes", "KB", "MB", "GB", "TB"]
+    size = float(value)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            if unit == "bytes":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{value} bytes"
+
+
+templates.env.globals.update(
+    max_file_size=MAX_FILE_SIZE_BYTES,
+    app_name="EKG Vector Store Admin",
+    is_authenticated=is_authenticated,
+)
+templates.env.filters["human_bytes"] = humanize_bytes
+
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=()",
+    "Content-Security-Policy": "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:",
+}
+
+
+def apply_security_headers(response):
+    for key, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(key, value)
+    return response
+
+
+def ensure_session(request: Request) -> None:
+    if "session_id" not in request.session:
+        request.session["session_id"] = generate_session_identifier()
+
+
+def get_csrf_token(request: Request) -> str:
+    token = request.session.get("csrf_token")
+    if not token:
+        token = generate_csrf_token()
+        request.session["csrf_token"] = token
+    return token
+
+
+def validate_csrf(request: Request, submitted_token: str | None) -> None:
+    expected = request.session.get("csrf_token")
+    if not expected or not submitted_token or not secrets.compare_digest(expected, submitted_token):
+        raise HTTPException(status_code=400, detail="Invalid CSRF token")
+
+
+def is_authenticated(request: Request) -> bool:
+    return bool(request.session.get("is_authenticated"))
+
+
+def render_template(name: str, request: Request, context: dict[str, Any]):
+    response = templates.TemplateResponse(name, context)
+    return apply_security_headers(response)
 
 # Request timeout configuration (30 minutes for deep mode)
 REQUEST_TIMEOUT = 1800  # 30 minutes
@@ -76,6 +188,192 @@ async def log_requests(request: Request, call_next):
     log.info(f"Request {request_id} completed: {response.status_code} in {process_time:.2f}s")
     
     return response
+
+# -----------------------------------------------------------------------------
+# Admin web experience
+# -----------------------------------------------------------------------------
+
+
+@app.get("/admin/login", response_class=HTMLResponse)
+async def login_get(request: Request):
+    ensure_session(request)
+    if is_authenticated(request):
+        response = RedirectResponse(url="/admin/ekg", status_code=status.HTTP_303_SEE_OTHER)
+        return apply_security_headers(response)
+
+    context = {
+        "request": request,
+        "csrf_token": get_csrf_token(request),
+        "max_file_size": MAX_FILE_SIZE_BYTES,
+        "error": None,
+    }
+    return render_template("login.html", request, context)
+
+
+@app.post("/admin/login", response_class=HTMLResponse)
+async def login_post(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    csrf_token: str = Form(...),
+):
+    ensure_session(request)
+    validate_csrf(request, csrf_token)
+
+    if (
+        secrets.compare_digest(username.strip(), settings.ADMIN_USERNAME)
+        and verify_password(password, settings.ADMIN_PASSWORD_HASH)
+    ):
+        request.session["is_authenticated"] = True
+        request.session["authenticated_at"] = datetime.utcnow().isoformat()
+        request.session["csrf_token"] = generate_csrf_token()
+        response = RedirectResponse(url="/admin/ekg", status_code=status.HTTP_303_SEE_OTHER)
+        return apply_security_headers(response)
+
+    context = {
+        "request": request,
+        "csrf_token": get_csrf_token(request),
+        "error": "Invalid credentials",
+        "max_file_size": MAX_FILE_SIZE_BYTES,
+    }
+    response = render_template("login.html", request, context)
+    response.status_code = status.HTTP_401_UNAUTHORIZED
+    return response
+
+
+@app.post("/admin/logout")
+async def logout_post(request: Request, csrf_token: str = Form(...)):
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    validate_csrf(request, csrf_token)
+    request.session.clear()
+    response = RedirectResponse(url="/admin/login", status_code=status.HTTP_303_SEE_OTHER)
+    return apply_security_headers(response)
+
+
+@app.get("/admin/ekg", response_class=HTMLResponse)
+async def admin_dashboard(request: Request):
+    ensure_session(request)
+    if not is_authenticated(request):
+        response = RedirectResponse(url="/admin/login", status_code=status.HTTP_303_SEE_OTHER)
+        return apply_security_headers(response)
+
+    records = await REGISTRY.list_records()
+    context = {
+        "request": request,
+        "records": records,
+        "csrf_token": get_csrf_token(request),
+        "max_file_size": MAX_FILE_SIZE_BYTES,
+    }
+    return render_template("admin_dashboard.html", request, context)
+
+
+@app.post("/admin/vector-store/upload", response_model=VectorStoreUploadResponse)
+async def upload_vector_store_file(
+    request: Request,
+    vector_store_name: str = Form(...),
+    csrf_token: str = Form(...),
+    file: UploadFile = File(...),
+):
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    validate_csrf(request, csrf_token)
+
+    try:
+        client = get_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    temp_path, _, sanitized_name = await persist_upload(file, UPLOAD_DIR)
+    try:
+        stored, vector_store_id = await ingest_file(
+            client=client,
+            vector_store_name=vector_store_name,
+            file_path=temp_path,
+            original_filename=sanitized_name,
+        )
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    return VectorStoreUploadResponse(
+        vector_store_id=vector_store_id,
+        file_id=stored.file_id,
+        filename=stored.filename,
+        size_bytes=stored.size_bytes,
+    )
+
+
+@app.get("/admin/google-drive/files")
+async def google_drive_files(request: Request, folder_link: str):
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    folder_id = extract_folder_id(folder_link)
+    files = await drive_client.list_folder(folder_id)
+
+    allowed_files = [
+        file
+        for file in files
+        if file.mime_type in settings.GOOGLE_ALLOWED_MIME_TYPES
+        and file.size <= MAX_FILE_SIZE_BYTES
+        and file.size > 0
+    ]
+    return {
+        "folderId": folder_id,
+        "files": [
+            {
+                "id": file.id,
+                "name": file.name,
+                "mimeType": file.mime_type,
+                "size": file.size,
+                "modifiedTime": file.modified_time,
+            }
+            for file in allowed_files
+        ]
+    }
+
+
+@app.post("/admin/google-drive/ingest", response_model=List[VectorStoreUploadResponse])
+async def google_drive_ingest(
+    request: Request,
+    payload: GoogleDriveIngestRequest,
+):
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    header_token = request.headers.get("X-CSRF-Token")
+    validate_csrf(request, header_token)
+
+    if not payload.file_ids:
+        raise HTTPException(status_code=400, detail="No files selected")
+
+    try:
+        client = get_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    responses: List[VectorStoreUploadResponse] = []
+
+    for file_id in payload.file_ids:
+        temp_path = UPLOAD_DIR / f"drive_{file_id}_{uuid.uuid4().hex}"
+        downloaded_path, _, filename = await drive_client.download_file(file_id, temp_path)
+        try:
+            stored, vector_store_id = await ingest_file(
+                client=client,
+                vector_store_name=payload.vector_store_name,
+                file_path=downloaded_path,
+                original_filename=filename,
+            )
+            responses.append(
+                VectorStoreUploadResponse(
+                    vector_store_id=vector_store_id,
+                    file_id=stored.file_id,
+                    filename=stored.filename,
+                    size_bytes=stored.size_bytes,
+                )
+            )
+        finally:
+            downloaded_path.unlink(missing_ok=True)
+
+    return responses
+
 
 # -----------------------------------------------------------------------------
 # Lazy singletons
