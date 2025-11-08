@@ -39,6 +39,10 @@ Your `.env` file should contain:
 ```env
 OPENAI_API_KEY=sk-proj-your-actual-key-here
 MODEL_DEFAULT=gpt-4o
+SESSION_SECRET_KEY=change-this
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD_HASH=$2b$12$4LnAjeX8ZBpBVyvrucwYcOGWvrEU6fCgtqlDJbw6yCmKjfir7k0AS
+GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/google-service-account.json
 ```
 
 **Alternative:** Export as environment variable:
@@ -57,6 +61,31 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 # Server will be available at http://localhost:8000
 # API docs at http://localhost:8000/docs
 ```
+
+### 🔐 Admin console for vector stores
+
+Visit `http://localhost:8000/admin/login` to access the secure admin console. The console lets you:
+
+- Upload new documents directly into an OpenAI vector store (with automatic re-embedding when the same filename already exists).
+- Pull documents from a Google Drive folder, select the files you want, and ingest them into any vector store.
+- Inspect the list of vector stores that have been created via the UI along with their most recent file metadata.
+
+Security best practices baked into the console:
+
+- Session cookies are signed and flagged `HttpOnly`, `Secure`, and SameSite aware.
+- Passwords are stored as bcrypt hashes. Generate your own hash with the helper in `api/security.py`:
+
+  ```python
+  from api.security import hash_password
+  print(hash_password("ChangeThisPassword!"))
+  ```
+
+- CSRF tokens are required for every POST action and are enforced both for HTML forms and JSON APIs.
+- A strict Content Security Policy, Referrer Policy, and other hardened headers are applied to all admin responses.
+
+> **Note:** Google Drive integration requires a service-account JSON with `drive.readonly` scope. Place the credential path in `GOOGLE_SERVICE_ACCOUNT_FILE` and share target folders with that service account.
+
+All vector-store metadata is cached locally at `data/vectorstores/registry.json` so uploads are tracked even across restarts.
 
 ## 🧪 Testing
 

@@ -1,0 +1,132 @@
+{% extends "layout.html" %}
+{% block title %} · Vector Store Manager{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Upload documents to a vector store</h2>
+  <p class="helper-text">
+    Upload a new knowledge file or refresh an existing one. Files larger than
+    {{ max_file_size | human_bytes }} are rejected automatically.
+  </p>
+  <form id="upload-form" class="form" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="form-field">
+      <label for="vector_store_name">Vector store name</label>
+      <input
+        id="vector_store_name"
+        name="vector_store_name"
+        type="text"
+        minlength="3"
+        maxlength="100"
+        required
+        placeholder="wealth_management_documents"
+      />
+    </div>
+    <div class="form-field">
+      <label for="file">File</label>
+      <input
+        id="file"
+        name="file"
+        type="file"
+        accept=".pdf,.txt,.doc,.docx,.md"
+        required
+      />
+    </div>
+    <div class="form-footer">
+      <button type="submit" class="btn-primary">Upload &amp; Embed</button>
+      <span id="upload-status" role="status" aria-live="polite"></span>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Ingest from Google Drive</h2>
+  <p class="helper-text">
+    Provide a shared folder link. Files that already exist in the selected vector store will be replaced.
+  </p>
+  <div class="form">
+    <div class="form-field">
+      <label for="drive-vector-store">Vector store name</label>
+      <input
+        id="drive-vector-store"
+        type="text"
+        placeholder="wealth_management_documents"
+        required
+      />
+    </div>
+    <div class="form-field">
+      <label for="drive-folder">Google Drive folder link or ID</label>
+      <input
+        id="drive-folder"
+        type="text"
+        placeholder="https://drive.google.com/drive/folders/..."
+        required
+      />
+    </div>
+    <div class="form-footer">
+      <button id="fetch-drive" class="btn-secondary" type="button">Fetch files</button>
+      <span id="drive-status" role="status" aria-live="polite"></span>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table id="drive-files" class="data-table">
+      <thead>
+        <tr>
+          <th scope="col"></th>
+          <th scope="col">File</th>
+          <th scope="col">Type</th>
+          <th scope="col">Size</th>
+          <th scope="col">Modified</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="form-footer">
+    <button id="ingest-selected" class="btn-primary" type="button" disabled>Ingest selected</button>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Existing vector stores</h2>
+  {% if records %}
+  <div class="table-responsive">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Vector store ID</th>
+          <th scope="col">Files</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for record in records %}
+        <tr>
+          <td>{{ record.name }}</td>
+          <td><code>{{ record.vector_store_id }}</code></td>
+          <td>
+            {% if record.files %}
+            <ul class="file-list">
+              {% for file in record.files.values() %}
+              <li>
+                <span class="file-name">{{ file.filename }}</span>
+                <span class="file-meta">{{ file.size_bytes | human_bytes }} · updated {{ file.updated_at }}</span>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <span class="muted">No files yet</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No vector stores have been created yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', path='js/admin.js') }}" defer></script>
+{% endblock %}
