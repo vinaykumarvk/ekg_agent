@@ -38,6 +38,8 @@ from api.schemas import (
     GoogleDriveIngestRequest,
     StructuredAnswerRequest,
     StructuredAnswerResponse,
+    WebSearchRequest,
+    WebSearchResponse,
 )
 from api.settings import settings
 from api.security import (
@@ -854,4 +856,220 @@ def answer_structured(req: StructuredAnswerRequest) -> StructuredAnswerResponse:
     except Exception as e:
         # Surface a clean 500 with message; full stacks remain in logs
         log.error(f"Unexpected error in structured request {request_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# -----------------------------------------------------------------------------
+# Web Search / Market Requirements Endpoint
+# -----------------------------------------------------------------------------
+@app.post("/req_desc_web_search", response_model=WebSearchResponse)
+def req_desc_web_search(req: WebSearchRequest) -> WebSearchResponse:
+    """
+    Endpoint for decomposing requirements into market subrequirements.
+    Uses web search (vector search) to research market-standard expectations.
+    """
+    start_time = time.time()
+    request_id = str(uuid.uuid4())
+    
+    try:
+        log.info(f"Processing web search request {request_id} for requirement: {req.requirement[:100]}...")
+        
+        from api.domains import get_domain
+        
+        # Get domain configuration
+        try:
+            domain_config = get_domain(req.domain)
+        except ValueError as e:
+            log.warning(f"Invalid domain {req.domain}: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {str(e)}")
+        
+        # Use request vectorstore_id or domain default
+        vectorstore_id = req.vectorstore_id or domain_config.default_vectorstore_id
+        if not vectorstore_id:
+            log.error(f"No vector store for domain {req.domain}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"No vector store specified for domain '{req.domain}'. "
+                       f"Please provide vectorstore_id in request or configure default for domain."
+            )
+        
+        # Generate unique response ID
+        response_id = str(uuid.uuid4())
+        
+        # Get OpenAI client
+        client = get_client()
+        
+        # Build WEB_SEARCH_SYSTEM_PROMPT
+        profile = req.profile or {}
+        WEB_SEARCH_SYSTEM_PROMPT = f"""
+You are a Wealth Management Product Analyst researching market-standard expectations for a given requirement.
+
+INPUT
+
+You receive:
+
+requirement: {req.requirement}
+
+profile: {json.dumps(profile, indent=2, ensure_ascii=False) if profile else "{}"}
+
+TASK
+
+Holistic framing
+
+First, step back and interpret the requirement in its broader business context
+(customer segment, products, channels, regulatory environment, and the profile).
+
+Decomposition
+
+Decompose the requirement into a set of upto 10 non-overlapping subrequirements that,
+together, fully cover the requirement from a modern wealth-platform perspective.
+
+Market enrichment
+
+Use web search to infer what modern wealth management platforms typically provide
+for each of these subrequirements for similar banks.
+
+Focus on capabilities and sub-features, not vendor names or specific products.
+
+OUTPUT (JSON ONLY, NO PROSE, NO MARKDOWN)
+
+Return a single JSON object with this shape:
+
+{{
+"market_subrequirements": [
+  {{
+    "id": "M1",
+    "title": "Short name of the subrequirement",
+    "description": "1–3 sentence description of what the platform should do",
+    "priority": "must_have" | "nice_to_have"
+  }},
+  ...
+]
+}}
+
+RULES
+
+Return between 3 and 10 subrequirements.
+
+Provide description of each subrequirment in <= 100 words. 
+
+Make subrequirements non-overlapping and reasonably granular.
+
+Keep them vendor-agnostic (generic capability statements).
+
+Do NOT include any text outside the JSON object.
+"""
+        
+        # Retrieve relevant documents using vector search (acts as file_search)
+        from ekg_core import retrieve_parallel, mmr_merge, rerank_chunks_by_relevance, expand_chunk_context
+        
+        # Build queries from requirement
+        queries = [
+            req.requirement,
+            f"wealth management platform {req.requirement}",
+            f"market standard {req.requirement}",
+            f"best practices {req.requirement}"
+        ]
+        
+        # Retrieve documents
+        pool = retrieve_parallel(client, vectorstore_id, queries, k_each=5)
+        
+        # Curate chunks
+        curated = mmr_merge(pool, k_final=20, lambda_div=0.4)
+        curated = rerank_chunks_by_relevance(
+            client, req.requirement, curated,
+            top_k=15, min_chunks=5
+        )
+        curated = expand_chunk_context(curated)
+        
+        # Build user message with retrieved context
+        user_parts = []
+        user_parts.append("## Requirement")
+        user_parts.append(req.requirement)
+        user_parts.append("")
+        
+        if profile:
+            user_parts.append("## Profile")
+            user_parts.append(json.dumps(profile, indent=2, ensure_ascii=False))
+            user_parts.append("")
+        
+        if curated:
+            user_parts.append("## Retrieved Market Information")
+            for i, c in enumerate(curated, 1):
+                src = c.get("filename") or c.get("file_id") or f"source_{i}"
+                txt = (c.get("text") or "")[:1500]
+                user_parts.append(f"[{i}] ({src})")
+                user_parts.append(txt)
+                user_parts.append("")
+        
+        user_msg = "\n".join(user_parts)
+        
+        # Call LLM with file_search tool (using vector search results as context)
+        # Note: OpenAI's file_search tool requires Assistants API, so we'll use the retrieved context directly
+        log.info(f"Calling LLM with model {req.model} for request {request_id}")
+        try:
+            resp = client.responses.create(
+                model=req.model,
+                input=[
+                    {"role": "system", "content": WEB_SEARCH_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_msg}
+                ]
+            )
+            answer = getattr(resp, "output_text", None) or getattr(resp, "output_texts", [""])[0]
+        except Exception as e:
+            log.error(f"LLM call failed for request {request_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to generate response: {str(e)}")
+        
+        # Parse JSON from answer
+        json_data = None
+        answer_text = answer
+        
+        try:
+            # Try to extract JSON from markdown code blocks
+            if "```json" in answer:
+                json_start = answer.find("```json") + 7
+                json_end = answer.find("```", json_start)
+                json_str = answer[json_start:json_end].strip()
+                json_data = json.loads(json_str)
+            elif "```" in answer:
+                json_start = answer.find("```") + 3
+                json_end = answer.find("```", json_start)
+                json_str = answer[json_start:json_end].strip()
+                json_data = json.loads(json_str)
+            else:
+                # Try parsing the entire answer as JSON
+                json_data = json.loads(answer.strip())
+        except (json.JSONDecodeError, ValueError) as e:
+            log.warning(f"JSON parsing failed for request {request_id}: {e}")
+            # Keep answer_text for debugging
+            pass
+        
+        # Add timing information
+        processing_time = time.time() - start_time
+        
+        meta = {
+            "domain": req.domain,
+            "vectorstore_id": vectorstore_id,
+            "response_id": response_id,
+            "model": req.model,
+            "processing_time_seconds": round(processing_time, 2),
+            "request_id": request_id,
+            "queries_used": queries[:3]  # First 3 queries
+        }
+        
+        log.info(f"Web search request {request_id} completed in {processing_time:.2f}s")
+        
+        return WebSearchResponse(
+            response_id=response_id,
+            json_data=json_data,
+            answer=answer_text if not json_data else None,
+            sources=curated,
+            meta=meta
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Surface a clean 500 with message; full stacks remain in logs
+        log.error(f"Unexpected error in web search request {request_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
