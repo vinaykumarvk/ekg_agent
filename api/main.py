@@ -954,7 +954,7 @@ Do NOT include any text outside the JSON object.
                 {"role": "user", "content": user_msg}
             ],
             "tools": [{
-                "type": "file_search",
+                "type": "web_search",
             }]
         }
         
@@ -965,8 +965,8 @@ Do NOT include any text outside the JSON object.
         log.info(f"  User message: {api_payload['input'][1]['content'][:200]}...")
         log.info(f"  Tools: {api_payload['tools']}")
         
-        # Call LLM with web search (file_search tool)
-        log.info(f"Calling LLM with model {req.model} and file_search tool for request {request_id}")
+        # Call LLM with web search tool
+        log.info(f"Calling LLM with model {req.model} and web_search tool for request {request_id}")
         try:
             resp = client.responses.create(**api_payload)
             answer = getattr(resp, "output_text", None) or getattr(resp, "output_texts", [""])[0]
