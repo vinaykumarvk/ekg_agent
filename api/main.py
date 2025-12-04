@@ -880,8 +880,11 @@ def req_desc_web_search(req: WebSearchRequest) -> WebSearchResponse:
         # Get OpenAI client
         client = get_client()
         
-        # Build WEB_SEARCH_SYSTEM_PROMPT
+        # Build WEB_SEARCH_SYSTEM_PROMPT (exact format matching user's provided prompt)
         profile = req.profile or {}
+        requirement = req.requirement
+        
+        # Build the prompt exactly as provided - with requirement and profile embedded
         WEB_SEARCH_SYSTEM_PROMPT = f"""
 You are a Wealth Management Product Analyst researching market-standard expectations for a given requirement.
 
@@ -889,7 +892,7 @@ INPUT
 
 You receive:
 
-requirement: {req.requirement}
+requirement: {requirement}
 
 profile: {json.dumps(profile, indent=2, ensure_ascii=False) if profile else "{}"}
 
@@ -941,10 +944,10 @@ Keep them vendor-agnostic (generic capability statements).
 Do NOT include any text outside the JSON object.
 """
         
-        # Build user message
+        # Build user message exactly as specified in the example
         user_msg = json.dumps({
-            "requirement": req.requirement,
-        }, indent=2, ensure_ascii=False)
+            "requirement": requirement,
+        })
         
         # Build the API payload
         api_payload = {
