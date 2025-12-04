@@ -1873,12 +1873,23 @@ def _smart_trim_passage(text: str, question: str, char_limit: int, max_segments:
 #     return answer_text
 
 
-def build_grounded_messages(question, compact_nodes, compact_edges, node_context, chunks, mode=None, preset_params=None):
+def build_grounded_messages(question, compact_nodes, compact_edges, node_context, chunks, mode=None, preset_params=None, custom_system_prompt=None, structured_context=None):
     """
     Build system and user messages for hybrid answer generation.
     Returns: (system_msg, user_msg) tuple
 
     This replaces the old build_grounded_prompt that returned a single string.
+    
+    Args:
+        question: The question string
+        compact_nodes: KG nodes
+        compact_edges: KG edges
+        node_context: Node context dict
+        chunks: Retrieved chunks
+        mode: Mode (concise/balanced/deep)
+        preset_params: Preset parameters
+        custom_system_prompt: Optional custom system prompt (overrides default)
+        structured_context: Optional dict with structured context (requirement, bank_profile, market_subrequirements, etc.)
     """
 
     # Determine mode
@@ -1901,8 +1912,11 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
         chunk_sentence_limit = preset_params.get("chunk_sentence_limit", chunk_sentence_limit)
 
     # ============= SYSTEM MESSAGE (Instructions) =============
-
-    if mode == "concise":
+    
+    # Use custom system prompt if provided
+    if custom_system_prompt:
+        system_msg = custom_system_prompt
+    elif mode == "concise":
         system_msg = (
             "You are a precise wealth-management assistant. "
             "Answer using ONLY the provided KG context and passages.\n\n"
@@ -2019,15 +2033,50 @@ def build_grounded_messages(question, compact_nodes, compact_edges, node_context
 
     user_parts = []
 
-    # Add formatting reminder
-    user_parts.append("## FORMATTING REMINDER")
-    user_parts.append("Before you write, remember:")
-    user_parts.append("✓ Use [1], [2], [3] for passage citations")
-    user_parts.append("✓ Use [KG: entity_name] for knowledge graph references")
-    user_parts.append("✓ Use bullets (•) extensively throughout")
-    user_parts.append("✓ Add markers (Key Point:, Note:, Important:, etc.)")
-    user_parts.append("✓ Keep sentences under 25 words")
-    user_parts.append("✓ Cite every factual statement\n")
+    # Add structured context if provided (for custom workflows)
+    if structured_context:
+        import json
+        requirement = structured_context.get("requirement")
+        bank_profile = structured_context.get("bank_profile")
+        market_subrequirements = structured_context.get("market_subrequirements")
+        
+        if requirement:
+            user_parts.append("## Requirement")
+            user_parts.append(str(requirement))
+            user_parts.append("")
+        
+        if bank_profile:
+            user_parts.append("## Bank Profile")
+            if isinstance(bank_profile, dict):
+                user_parts.append(json.dumps(bank_profile, indent=2, ensure_ascii=False))
+            else:
+                user_parts.append(str(bank_profile))
+            user_parts.append("")
+        
+        if market_subrequirements:
+            user_parts.append("## Market Subrequirements")
+            if isinstance(market_subrequirements, list):
+                for subreq in market_subrequirements:
+                    if isinstance(subreq, dict):
+                        user_parts.append(f"- **{subreq.get('id', 'N/A')}**: {subreq.get('title', '')}")
+                        user_parts.append(f"  Description: {subreq.get('description', '')}")
+                        user_parts.append(f"  Priority: {subreq.get('priority', 'N/A')}")
+                    else:
+                        user_parts.append(f"- {subreq}")
+            else:
+                user_parts.append(str(market_subrequirements))
+            user_parts.append("")
+    
+    # Add formatting reminder (skip if custom system prompt is used)
+    if not custom_system_prompt:
+        user_parts.append("## FORMATTING REMINDER")
+        user_parts.append("Before you write, remember:")
+        user_parts.append("✓ Use [1], [2], [3] for passage citations")
+        user_parts.append("✓ Use [KG: entity_name] for knowledge graph references")
+        user_parts.append("✓ Use bullets (•) extensively throughout")
+        user_parts.append("✓ Add markers (Key Point:, Note:, Important:, etc.)")
+        user_parts.append("✓ Keep sentences under 25 words")
+        user_parts.append("✓ Cite every factual statement\n")
 
     # Add question
     user_parts.append("## Question")

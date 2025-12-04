@@ -591,16 +591,18 @@ def metrics():
 # -----------------------------------------------------------------------------
 # Normalize any core/agent output to AskResponse
 # -----------------------------------------------------------------------------
-def _normalize_answer(res: Dict[str, Any], response_id: str) -> AskResponse:
+def _normalize_answer(res: Dict[str, Any], response_id: str, output_format: str = "markdown") -> AskResponse:
     """
     Your core may return:
       - {"markdown": "...", "sources": ..., "meta": ...}
       - {"answer": "...", "curated_chunks": ..., "model_used": ..., "export_path": ...}
+      - {"json_data": {...}, "answer": "..."} for structured responses
       - or nested under "data": {...}
     We normalize to AskResponse.
     """
     # Try top-level first
     markdown = res.get("markdown") or res.get("answer") or ""
+    json_data = res.get("json_data")
     sources = res.get("sources") or res.get("curated_chunks")
     meta = res.get("meta") or {
         "export_path": res.get("export_path"),
@@ -612,6 +614,7 @@ def _normalize_answer(res: Dict[str, Any], response_id: str) -> AskResponse:
     if not markdown and isinstance(res.get("data"), dict):
         d = res["data"]
         markdown = d.get("markdown") or d.get("answer") or ""
+        json_data = json_data or d.get("json_data")
         sources = sources or d.get("sources")
         if not meta:
             meta = d.get("meta")
@@ -619,7 +622,23 @@ def _normalize_answer(res: Dict[str, Any], response_id: str) -> AskResponse:
     if markdown is None:
         markdown = ""
 
-    return AskResponse(response_id=response_id, markdown=markdown, sources=sources, meta=meta)
+    # Return appropriate format
+    if output_format == "json" and json_data:
+        return AskResponse(
+            response_id=response_id,
+            markdown=None,
+            json_data=json_data,
+            sources=sources,
+            meta=meta
+        )
+    else:
+        return AskResponse(
+            response_id=response_id,
+            markdown=markdown,
+            json_data=json_data if output_format == "json" else None,
+            sources=sources,
+            meta=meta
+        )
 
 # -----------------------------------------------------------------------------
 # Main endpoint
@@ -665,19 +684,29 @@ def answer(req: AskRequest) -> AskResponse:
         log.info(f"Creating agent for domain {req.domain}, mode {mode}")
         agent = get_agent(req.domain, vectorstore_id, preset_params)
         
-        # Enhance question with conversational context if response_id provided
-        enhanced_question = req.question
-        if req.response_id or req.conversation_id:
-            # Add conversational context to the question
-            enhanced_question = f"Previous context ID: {response_id}\n\nQuestion: {req.question}"
-        
-        # Execute with timeout
-        log.info(f"Executing agent.answer for request {request_id}")
-        try:
-            raw = agent.answer(enhanced_question)  # dict from orchestrator/core
-        except Exception as e:
-            log.error(f"Agent execution failed for request {request_id}: {e}")
-            raise HTTPException(status_code=500, detail="Failed to generate answer")
+        # Check if this is structured input or regular question
+        if req.question_payload:
+            # Handle structured input
+            log.info(f"Processing structured input for request {request_id}")
+            try:
+                raw = agent.answer_structured(req.question_payload)
+            except Exception as e:
+                log.error(f"Structured answer execution failed for request {request_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to generate structured answer: {str(e)}")
+        else:
+            # Handle regular string question (backward compatible)
+            enhanced_question = req.question
+            if req.response_id or req.conversation_id:
+                # Add conversational context to the question
+                enhanced_question = f"Previous context ID: {response_id}\n\nQuestion: {req.question}"
+            
+            # Execute with timeout
+            log.info(f"Executing agent.answer for request {request_id}")
+            try:
+                raw = agent.answer(enhanced_question)  # dict from orchestrator/core
+            except Exception as e:
+                log.error(f"Agent execution failed for request {request_id}: {e}")
+                raise HTTPException(status_code=500, detail="Failed to generate answer")
         
         # Add domain info to metadata
         if "meta" not in raw or raw["meta"] is None:
@@ -700,7 +729,7 @@ def answer(req: AskRequest) -> AskResponse:
         log.info(f"Request {request_id} completed in {processing_time:.2f}s")
         
         # Normalize shapes into AskResponse
-        return _normalize_answer(raw, response_id)
+        return _normalize_answer(raw, response_id, output_format=req.output_format)
         
     except HTTPException:
         raise

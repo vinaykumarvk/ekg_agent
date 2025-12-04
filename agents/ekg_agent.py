@@ -3,6 +3,7 @@ from agents.tools.intent_clarification import clarify_intent
 from agents.tools.kg_extraction import run_kg_answer
 from agents.tools.vector_extraction import run_vector_answer
 from agents.tools.answer_formatting import to_markdown_with_citations
+from agents.tools.structured_answer import run_structured_answer
 from ekg_core import hybrid_answer  # ← call your tested hybrid
 
 class EKGAgent:
@@ -10,6 +11,15 @@ class EKGAgent:
         self.client, self.vs_id = client, vs_id
         self.G, self.by_id, self.name_index = G, by_id, name_index
         self.preset_params = preset_params
+
+    def answer_structured(self, question_payload: Dict[str, Any]) -> Dict:
+        """Handle structured input with custom system prompt"""
+        return run_structured_answer(
+            question_payload,
+            client=self.client,
+            vs_id=self.vs_id,
+            preset_params=self.preset_params
+        )
 
     def answer(self, question: str) -> Dict:
         intent = clarify_intent(question)
