@@ -946,19 +946,29 @@ Do NOT include any text outside the JSON object.
             "requirement": req.requirement,
         }, indent=2, ensure_ascii=False)
         
+        # Build the API payload
+        api_payload = {
+            "model": req.model,
+            "input": [
+                {"role": "system", "content": WEB_SEARCH_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg}
+            ],
+            "tools": [{
+                "type": "file_search",
+            }]
+        }
+        
+        # Log the exact payload being sent
+        log.info(f"API Payload for request {request_id}:")
+        log.info(f"  Model: {api_payload['model']}")
+        log.info(f"  System message length: {len(api_payload['input'][0]['content'])} chars")
+        log.info(f"  User message: {api_payload['input'][1]['content'][:200]}...")
+        log.info(f"  Tools: {api_payload['tools']}")
+        
         # Call LLM with web search (file_search tool)
         log.info(f"Calling LLM with model {req.model} and file_search tool for request {request_id}")
         try:
-            resp = client.responses.create(
-                model=req.model,
-                input=[
-                    {"role": "system", "content": WEB_SEARCH_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg}
-                ],
-                tools=[{
-                    "type": "file_search",
-                }]
-            )
+            resp = client.responses.create(**api_payload)
             answer = getattr(resp, "output_text", None) or getattr(resp, "output_texts", [""])[0]
         except Exception as e:
             log.error(f"LLM call failed for request {request_id}: {e}", exc_info=True)
