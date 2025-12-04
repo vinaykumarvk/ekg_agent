@@ -36,6 +36,8 @@ from api.schemas import (
     AskResponse,
     VectorStoreUploadResponse,
     GoogleDriveIngestRequest,
+    StructuredAnswerRequest,
+    StructuredAnswerResponse,
 )
 from api.settings import settings
 from api.security import (
@@ -710,29 +712,19 @@ def answer(req: AskRequest) -> AskResponse:
         log.info(f"Creating agent for domain {req.domain}, mode {mode}")
         agent = get_agent(req.domain, vectorstore_id, preset_params)
         
-        # Check if this is structured input or regular question
-        if req.question_payload:
-            # Handle structured input
-            log.info(f"Processing structured input for request {request_id}")
-            try:
-                raw = agent.answer_structured(req.question_payload)
-            except Exception as e:
-                log.error(f"Structured answer execution failed for request {request_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to generate structured answer: {str(e)}")
-        else:
-            # Handle regular string question (backward compatible)
-            enhanced_question = req.question
-            if req.response_id or req.conversation_id:
-                # Add conversational context to the question
-                enhanced_question = f"Previous context ID: {response_id}\n\nQuestion: {req.question}"
-            
-            # Execute with timeout
-            log.info(f"Executing agent.answer for request {request_id}")
-            try:
-                raw = agent.answer(enhanced_question)  # dict from orchestrator/core
-            except Exception as e:
-                log.error(f"Agent execution failed for request {request_id}: {e}")
-                raise HTTPException(status_code=500, detail="Failed to generate answer")
+        # Handle regular string question (backward compatible - no structured input here)
+        enhanced_question = req.question
+        if req.response_id or req.conversation_id:
+            # Add conversational context to the question
+            enhanced_question = f"Previous context ID: {response_id}\n\nQuestion: {req.question}"
+        
+        # Execute with timeout
+        log.info(f"Executing agent.answer for request {request_id}")
+        try:
+            raw = agent.answer(enhanced_question)  # dict from orchestrator/core
+        except Exception as e:
+            log.error(f"Agent execution failed for request {request_id}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to generate answer")
         
         # Add domain info to metadata
         if "meta" not in raw or raw["meta"] is None:
@@ -762,4 +754,104 @@ def answer(req: AskRequest) -> AskResponse:
     except Exception as e:
         # Surface a clean 500 with message; full stacks remain in logs
         log.error(f"Unexpected error in request {request_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# -----------------------------------------------------------------------------
+# Structured Answer Endpoint (New)
+# -----------------------------------------------------------------------------
+@app.post("/v1/answer-structured", response_model=StructuredAnswerResponse)
+def answer_structured(req: StructuredAnswerRequest) -> StructuredAnswerResponse:
+    """
+    New endpoint specifically for structured input with custom system prompts.
+    This endpoint is designed for complex workflows like internal capabilities analysis.
+    """
+    start_time = time.time()
+    request_id = str(uuid.uuid4())
+    
+    try:
+        log.info(f"Processing structured request {request_id} for domain {req.domain}")
+        
+        from api.domains import get_domain
+        
+        # Get domain configuration
+        try:
+            domain_config = get_domain(req.domain)
+        except ValueError as e:
+            log.warning(f"Invalid domain {req.domain}: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {str(e)}")
+        
+        # Use request vectorstore_id or domain default
+        vectorstore_id = req.vectorstore_id or domain_config.default_vectorstore_id
+        if not vectorstore_id:
+            log.error(f"No vector store for domain {req.domain}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"No vector store specified for domain '{req.domain}'. "
+                       f"Please provide vectorstore_id in request or configure default for domain."
+            )
+        
+        # Generate unique response ID
+        response_id = str(uuid.uuid4())
+        
+        # Create agent for this domain + vector store
+        # Merge user params with preset parameters
+        from ekg_core.core import get_preset
+        mode = req.params.get("_mode", "balanced") if req.params else "balanced"
+        preset_params = get_preset(mode)
+        if req.params:
+            preset_params.update(req.params)  # User params override preset
+        
+        log.info(f"Creating agent for domain {req.domain}, mode {mode}")
+        agent = get_agent(req.domain, vectorstore_id, preset_params)
+        
+        # Convert StructuredQuestionPayload to dict for agent
+        question_payload_dict = {
+            "system_prompt": req.question_payload.system_prompt,
+            "requirement": req.question_payload.requirement,
+            "bank_profile": req.question_payload.bank_profile or {},
+            "market_subrequirements": req.question_payload.market_subrequirements or []
+        }
+        
+        # Handle structured input
+        log.info(f"Processing structured input for request {request_id}")
+        try:
+            raw = agent.answer_structured(question_payload_dict)
+        except Exception as e:
+            log.error(f"Structured answer execution failed for request {request_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to generate structured answer: {str(e)}")
+        
+        # Add domain info to metadata
+        if "meta" not in raw or raw["meta"] is None:
+            raw["meta"] = {}
+        raw["meta"]["domain"] = req.domain
+        raw["meta"]["vectorstore_id"] = vectorstore_id
+        raw["meta"]["response_id"] = response_id
+        raw["meta"]["mode"] = mode
+        
+        # Add timing information
+        processing_time = time.time() - start_time
+        raw["meta"]["processing_time_seconds"] = round(processing_time, 2)
+        raw["meta"]["request_id"] = request_id
+        
+        log.info(f"Structured request {request_id} completed in {processing_time:.2f}s")
+        
+        # Extract JSON data and answer
+        json_data = raw.get("json_data")
+        answer_text = raw.get("answer", "")
+        sources = raw.get("curated_chunks") or raw.get("sources")
+        
+        return StructuredAnswerResponse(
+            response_id=response_id,
+            json_data=json_data,
+            answer=answer_text if not json_data else None,  # Only include answer if JSON parsing failed
+            sources=sources,
+            meta=raw.get("meta")
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Surface a clean 500 with message; full stacks remain in logs
+        log.error(f"Unexpected error in structured request {request_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
