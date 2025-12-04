@@ -80,8 +80,6 @@ class WebSearchRequest(BaseModel):
     """Request schema for web search / market requirements endpoint"""
     requirement: str = Field(..., description="Requirement description to decompose")
     profile: Optional[Dict[str, Any]] = Field(None, description="Bank profile information")
-    domain: str = Field(default="wealth_management", description="Domain identifier")
-    vectorstore_id: Optional[str] = Field(None, description="Vector store ID (uses domain default if not provided)")
     model: str = Field(default="gpt-4o", description="Model name to use")
 
 

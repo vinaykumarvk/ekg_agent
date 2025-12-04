@@ -18,8 +18,6 @@ def test_web_search_endpoint():
             "core_system": "Custom Platform",
             "customer_segment": "Retail and Corporate"
         },
-        "domain": "wealth_management",
-        "vectorstore_id": "vs_689b49252a4c8191a12a1528a475fbd8",
         "model": "gpt-4o"
     }
     
@@ -29,7 +27,6 @@ def test_web_search_endpoint():
     print(f"\nRequest URL: {BASE_URL}/req_desc_web_search")
     print(f"\nRequirement: {payload['requirement'][:100]}...")
     print(f"Model: {payload['model']}")
-    print(f"Domain: {payload['domain']}")
     
     try:
         response = requests.post(
@@ -113,8 +110,6 @@ Request Body:
     "regulatory_framework": "...",
     "customer_segment": "..."
   },
-  "domain": "wealth_management",
-  "vectorstore_id": "optional",
   "model": "gpt-4o"
 }
 
@@ -138,9 +133,10 @@ Response:
 
 Features:
 - Decomposes requirements into 3-10 non-overlapping subrequirements
-- Uses vector search to research market standards
+- Uses web search (file_search tool) to research market standards
 - Returns structured JSON with priorities
 - Vendor-agnostic capability statements
+- No vectorstore_id needed - uses web search directly
 """)
 
 

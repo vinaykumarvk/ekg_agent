@@ -866,32 +866,13 @@ def answer_structured(req: StructuredAnswerRequest) -> StructuredAnswerResponse:
 def req_desc_web_search(req: WebSearchRequest) -> WebSearchResponse:
     """
     Endpoint for decomposing requirements into market subrequirements.
-    Uses web search (vector search) to research market-standard expectations.
+    Uses web search to research market-standard expectations.
     """
     start_time = time.time()
     request_id = str(uuid.uuid4())
     
     try:
         log.info(f"Processing web search request {request_id} for requirement: {req.requirement[:100]}...")
-        
-        from api.domains import get_domain
-        
-        # Get domain configuration
-        try:
-            domain_config = get_domain(req.domain)
-        except ValueError as e:
-            log.warning(f"Invalid domain {req.domain}: {e}")
-            raise HTTPException(status_code=400, detail=f"Invalid domain: {str(e)}")
-        
-        # Use request vectorstore_id or domain default
-        vectorstore_id = req.vectorstore_id or domain_config.default_vectorstore_id
-        if not vectorstore_id:
-            log.error(f"No vector store for domain {req.domain}")
-            raise HTTPException(
-                status_code=400,
-                detail=f"No vector store specified for domain '{req.domain}'. "
-                       f"Please provide vectorstore_id in request or configure default for domain."
-            )
         
         # Generate unique response ID
         response_id = str(uuid.uuid4())
@@ -960,60 +941,23 @@ Keep them vendor-agnostic (generic capability statements).
 Do NOT include any text outside the JSON object.
 """
         
-        # Retrieve relevant documents using vector search (acts as file_search)
-        from ekg_core import retrieve_parallel, mmr_merge, rerank_chunks_by_relevance, expand_chunk_context
+        # Build user message
+        user_msg = json.dumps({
+            "requirement": req.requirement,
+        }, indent=2, ensure_ascii=False)
         
-        # Build queries from requirement
-        queries = [
-            req.requirement,
-            f"wealth management platform {req.requirement}",
-            f"market standard {req.requirement}",
-            f"best practices {req.requirement}"
-        ]
-        
-        # Retrieve documents
-        pool = retrieve_parallel(client, vectorstore_id, queries, k_each=5)
-        
-        # Curate chunks
-        curated = mmr_merge(pool, k_final=20, lambda_div=0.4)
-        curated = rerank_chunks_by_relevance(
-            client, req.requirement, curated,
-            top_k=15, min_chunks=5
-        )
-        curated = expand_chunk_context(curated)
-        
-        # Build user message with retrieved context
-        user_parts = []
-        user_parts.append("## Requirement")
-        user_parts.append(req.requirement)
-        user_parts.append("")
-        
-        if profile:
-            user_parts.append("## Profile")
-            user_parts.append(json.dumps(profile, indent=2, ensure_ascii=False))
-            user_parts.append("")
-        
-        if curated:
-            user_parts.append("## Retrieved Market Information")
-            for i, c in enumerate(curated, 1):
-                src = c.get("filename") or c.get("file_id") or f"source_{i}"
-                txt = (c.get("text") or "")[:1500]
-                user_parts.append(f"[{i}] ({src})")
-                user_parts.append(txt)
-                user_parts.append("")
-        
-        user_msg = "\n".join(user_parts)
-        
-        # Call LLM with file_search tool (using vector search results as context)
-        # Note: OpenAI's file_search tool requires Assistants API, so we'll use the retrieved context directly
-        log.info(f"Calling LLM with model {req.model} for request {request_id}")
+        # Call LLM with web search (file_search tool)
+        log.info(f"Calling LLM with model {req.model} and file_search tool for request {request_id}")
         try:
             resp = client.responses.create(
                 model=req.model,
                 input=[
                     {"role": "system", "content": WEB_SEARCH_SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg}
-                ]
+                ],
+                tools=[{
+                    "type": "file_search",
+                }]
             )
             answer = getattr(resp, "output_text", None) or getattr(resp, "output_texts", [""])[0]
         except Exception as e:
@@ -1048,13 +992,10 @@ Do NOT include any text outside the JSON object.
         processing_time = time.time() - start_time
         
         meta = {
-            "domain": req.domain,
-            "vectorstore_id": vectorstore_id,
             "response_id": response_id,
             "model": req.model,
             "processing_time_seconds": round(processing_time, 2),
-            "request_id": request_id,
-            "queries_used": queries[:3]  # First 3 queries
+            "request_id": request_id
         }
         
         log.info(f"Web search request {request_id} completed in {processing_time:.2f}s")
@@ -1063,7 +1004,7 @@ Do NOT include any text outside the JSON object.
             response_id=response_id,
             json_data=json_data,
             answer=answer_text if not json_data else None,
-            sources=curated,
+            sources=None,  # Web search doesn't return sources in the same way
             meta=meta
         )
         
