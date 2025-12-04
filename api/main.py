@@ -22,6 +22,7 @@ from fastapi import (
     UploadFile,
     File,
     status,
+    RequestValidationError,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -65,6 +66,31 @@ logging.basicConfig(
 
 log = logging.getLogger("ekg_agent")  # Application-specific logger
 app = FastAPI(title="KG Vector Response API", version="2.0.0")
+
+# Add validation error handler for better error messages
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle validation errors and return detailed error messages"""
+    errors = []
+    for error in exc.errors():
+        field = " -> ".join(str(loc) for loc in error.get("loc", []))
+        msg = error.get("msg", "Validation error")
+        error_type = error.get("type", "unknown")
+        errors.append({
+            "field": field,
+            "message": msg,
+            "type": error_type
+        })
+    
+    log.warning(f"Validation error on {request.url.path}: {errors}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "Validation error",
+            "errors": errors,
+            "body": exc.body if hasattr(exc, 'body') else None
+        }
+    )
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = Path(settings.CACHE_DIR) / "uploads"

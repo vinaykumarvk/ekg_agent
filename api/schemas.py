@@ -17,11 +17,24 @@ class AskRequest(BaseModel):
     @model_validator(mode='after')
     def validate_question_or_payload(self):
         """Ensure at least one of question or question_payload is provided"""
-        if not self.question and not self.question_payload:
-            raise ValueError("Either 'question' or 'question_payload' must be provided")
+        # Check if question is provided and not empty
+        has_question = self.question is not None and str(self.question).strip() != ""
+        
+        # Check if question_payload is provided and not empty
+        has_payload = (
+            self.question_payload is not None and 
+            isinstance(self.question_payload, dict) and 
+            len(self.question_payload) > 0
+        )
+        
+        if not has_question and not has_payload:
+            raise ValueError(
+                "Either 'question' (string) or 'question_payload' (dict) must be provided. "
+                "question_payload should contain: system_prompt, requirement, bank_profile, market_subrequirements"
+            )
         
         # Auto-set to JSON if structured payload is used
-        if self.question_payload and self.output_format != "json":
+        if has_payload and self.output_format != "json":
             self.output_format = "json"
         
         return self
