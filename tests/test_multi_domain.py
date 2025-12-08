@@ -78,8 +78,7 @@ def test_query_wealth_management_domain():
         mock_client.responses.create.return_value = MagicMock(output_text="Test answer [1]")
         mock_client.vector_stores.search.return_value = MagicMock(data=[])
         mock_client.embeddings.create.return_value = MagicMock(data=[MagicMock(embedding=[0.1]*1536)])
-        
-        main_mod.get_client.cache_clear()
+        # Cache removed - no need to clear
         with patch.object(main_mod, "get_client", return_value=mock_client):
             r = client.post("/v1/answer", json={
                 "question": "Test question for wealth",
@@ -111,8 +110,7 @@ def test_query_apf_domain():
         mock_client.responses.create.return_value = MagicMock(output_text="Test answer [1]")
         mock_client.vector_stores.search.return_value = MagicMock(data=[])
         mock_client.embeddings.create.return_value = MagicMock(data=[MagicMock(embedding=[0.1]*1536)])
-        
-        main_mod.get_client.cache_clear()
+        # Cache removed - no need to clear
         with patch.object(main_mod, "get_client", return_value=mock_client):
             r = client.post("/v1/answer", json={
                 "question": "Test question for APF",
@@ -148,29 +146,27 @@ def test_domain_independence():
     print(f"  apf: {G_apf.number_of_nodes()} nodes")
 
 
-def test_domain_caching():
-    """Test that domains are cached correctly"""
-    from api.main import load_graph_artifacts, _KG_CACHE
-    
-    # Clear cache
-    _KG_CACHE.clear()
+def test_domain_no_caching():
+    """Test that domains are loaded fresh each time (no caching)"""
+    from api.main import load_graph_artifacts
     
     # Load domain 1
     G1, _, _ = load_graph_artifacts("wealth_management")
-    assert "wealth_management" in _KG_CACHE
+    assert G1 is not None
+    assert G1.number_of_nodes() > 0
     
     # Load domain 2
     G2, _, _ = load_graph_artifacts("apf")
-    assert "apf" in _KG_CACHE
+    assert G2 is not None
+    assert G2.number_of_nodes() > 0
     
-    # Both should be cached
-    assert len(_KG_CACHE) == 2
-    
-    # Load domain 1 again - should use cache
+    # Load domain 1 again - should be fresh (not cached)
     G1_again, _, _ = load_graph_artifacts("wealth_management")
-    assert G1 is G1_again, "Should return same cached object"
+    # Note: Since we're loading fresh each time, objects may be different
+    # But both should have the same number of nodes
+    assert G1.number_of_nodes() == G1_again.number_of_nodes()
     
-    print(f"\n✓ Caching works: {len(_KG_CACHE)} domains cached")
+    print(f"\n✓ No caching - domains loaded fresh each time")
 
 
 def test_invalid_domain():
@@ -207,8 +203,7 @@ def test_backward_compatibility():
         mock_client.responses.create.return_value = MagicMock(output_text="Test answer")
         mock_client.vector_stores.search.return_value = MagicMock(data=[])
         mock_client.embeddings.create.return_value = MagicMock(data=[MagicMock(embedding=[0.1]*1536)])
-        
-        main_mod.get_client.cache_clear()
+        # Cache removed - no need to clear
         with patch.object(main_mod, "get_client", return_value=mock_client):
             # Old-style request without domain field
             r = client.post("/v1/answer", json={

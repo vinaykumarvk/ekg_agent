@@ -30,25 +30,41 @@ class DomainConfig:
     kg_vectorstore_id: Optional[str] = None  # KG vector store ID (for KG node search)
     description: str = ""
     
+    def get_kg_path(self) -> str:
+        """
+        Get KG path dynamically from environment variable.
+        This ensures env vars are read at runtime, not at module load time.
+        Raises ValueError if environment variable is not set.
+        """
+        env_var_name = f"{self.domain_id.upper()}_KG_PATH"
+        env_path = os.getenv(env_var_name)
+        if not env_path:
+            raise ValueError(
+                f"KG path not configured for domain '{self.domain_id}'. "
+                f"Set {env_var_name} environment variable."
+            )
+        return env_path
+    
     def to_dict(self):
         """Convert to dictionary for API responses"""
         return {
             "domain_id": self.domain_id,
             "name": self.name,
             "description": self.description,
-            "kg_path": self.kg_path,
+            "kg_path": self.get_kg_path(),  # Use dynamic getter
             "default_vectorstore_id": self.default_vectorstore_id,
             "kg_vectorstore_id": self.kg_vectorstore_id,
         }
 
 
-def _get_vector_store_id(domain_id: str) -> Optional[str]:
+def _get_vector_store_id(domain_id: str) -> str:
     """
     Get document vector store ID for a domain from environment variables or settings.
     Priority:
     1. Domain-specific env var (e.g., WEALTH_MANAGEMENT_VECTOR_STORE_ID)
     2. DOC_VECTOR_STORE_ID (shared default)
-    3. None (will cause error if domain requires it)
+    
+    Raises ValueError if neither is configured.
     
     In Google Cloud, these are injected from Secret Manager as environment variables.
     """
@@ -58,15 +74,22 @@ def _get_vector_store_id(domain_id: str) -> Optional[str]:
     if domain_id_value:
         return domain_id_value
     
-    # Fall back to shared DOC_VECTOR_STORE_ID
+    # Try shared DOC_VECTOR_STORE_ID
     doc_vs_id = os.getenv("DOC_VECTOR_STORE_ID") or settings.DOC_VECTOR_STORE_ID
-    return doc_vs_id
+    if doc_vs_id:
+        return doc_vs_id
+    
+    # No fallback - fail explicitly
+    raise ValueError(
+        f"Vector store ID not configured for domain '{domain_id}'. "
+        f"Set {domain_env_var} or DOC_VECTOR_STORE_ID environment variable."
+    )
 
 
-def _get_kg_vector_store_id() -> Optional[str]:
+def _get_kg_vector_store_id() -> str:
     """
     Get KG vector store ID from environment variables or settings.
-    Falls back to DOC_VECTOR_STORE_ID if KG_VECTOR_STORE_ID is not set.
+    Raises ValueError if not configured.
     
     In Google Cloud, this is injected from Secret Manager as an environment variable.
     """
@@ -74,19 +97,22 @@ def _get_kg_vector_store_id() -> Optional[str]:
     if kg_vs_id:
         return kg_vs_id
     
-    # Fall back to DOC_VECTOR_STORE_ID if KG_VECTOR_STORE_ID not set
-    doc_vs_id = os.getenv("DOC_VECTOR_STORE_ID") or settings.DOC_VECTOR_STORE_ID
-    return doc_vs_id
+    # No fallback - fail explicitly
+    raise ValueError(
+        "KG vector store ID not configured. Set KG_VECTOR_STORE_ID environment variable."
+    )
 
 
 # Registry of available domains
 # Vector store IDs are read from environment variables (or .env file)
 # In production (Google Cloud), these come from Secret Manager
+# Note: kg_path defaults are only used for initialization - actual loading uses get_kg_path()
+# which requires environment variables to be set
 DOMAINS: Dict[str, DomainConfig] = {
     "wealth_management": DomainConfig(
         domain_id="wealth_management",
         name="Wealth Management",
-        kg_path=os.getenv("WEALTH_MANAGEMENT_KG_PATH", "data/kg/wealth_product_kg.json"),
+        kg_path="",  # Will be read from WEALTH_MANAGEMENT_KG_PATH env var at runtime
         default_vectorstore_id=_get_vector_store_id("wealth_management"),
         kg_vectorstore_id=_get_kg_vector_store_id(),
         description="Mutual funds, orders, customer onboarding, and wealth management processes"
@@ -94,7 +120,7 @@ DOMAINS: Dict[str, DomainConfig] = {
     "apf": DomainConfig(
         domain_id="apf",
         name="APF",
-        kg_path=os.getenv("APF_KG_PATH", "data/kg/apf_kg.json"),
+        kg_path="",  # Will be read from APF_KG_PATH env var at runtime
         default_vectorstore_id=_get_vector_store_id("apf"),
         kg_vectorstore_id=_get_kg_vector_store_id(),
         description="APF process data"

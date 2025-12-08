@@ -71,8 +71,7 @@ def test_answer_vector_mode(monkeypatch):
     def fake_get_client():
         return make_mock_openai_client()
 
-    # Clear cache on provider and set fake
-    main_mod.get_client.cache_clear()  # type: ignore[attr-defined]
+    # Cache removed - no need to clear
     monkeypatch.setattr(main_mod, "get_client", fake_get_client)
 
     app = main_mod.app

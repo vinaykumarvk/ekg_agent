@@ -63,113 +63,19 @@ except ImportError:
     log = logging.getLogger(__name__)
     log.warning("ipywidgets not available")
 
-"""## Answer Caching System"""
-
-# Cache configuration - Production ready
-import time
-from collections import OrderedDict
-from typing import Optional
-
-# Use settings for cache configuration
-try:
-    from api.settings import settings
-    CACHE_DIR = settings.CACHE_DIR
-    MAX_CACHE_SIZE = settings.MAX_CACHE_SIZE
-    CACHE_TTL = settings.CACHE_TTL
-except ImportError:
-    # Fallback if settings not available
-    CACHE_DIR = os.getenv("CACHE_DIR", "/tmp/ekg_cache")
-    MAX_CACHE_SIZE = int(os.getenv("MAX_CACHE_SIZE", "1000"))
-    CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))
-
-os.makedirs(CACHE_DIR, exist_ok=True)
-ANSWER_CACHE_FILE = os.path.join(CACHE_DIR, "answer_cache.pkl")
-SIMILARITY_THRESHOLD = 0.80
-
-class LRUCache:
-    """Thread-safe LRU cache with TTL support"""
-    def __init__(self, max_size: int = None, ttl: int = None):
-        self.max_size = max_size or MAX_CACHE_SIZE
-        self.ttl = ttl or CACHE_TTL
-        self.cache = OrderedDict()
-        self._lock = threading.Lock()
-    
-    def get(self, key: str) -> Optional[Any]:
-        with self._lock:
-            if key in self.cache:
-                value, timestamp = self.cache[key]
-                if time.time() - timestamp < self.ttl:
-                    self.cache.move_to_end(key)
-                    return value
-                else:
-                    del self.cache[key]
-            return None
-    
-    def set(self, key: str, value: Any) -> None:
-        with self._lock:
-            if len(self.cache) >= self.max_size:
-                self.cache.popitem(last=False)
-            self.cache[key] = (value, time.time())
-    
-    def clear(self) -> None:
-        with self._lock:
-            self.cache.clear()
-    
-    def size(self) -> int:
-        with self._lock:
-            return len(self.cache)
-
-_EMBED_CACHE_LOCK = threading.Lock()
-_EMBED_CACHE_MAX = 512
-_EMBED_CACHE = OrderedDict()
-
-
-def _cache_embedding(key, value):
-    with _EMBED_CACHE_LOCK:
-        if key in _EMBED_CACHE:
-            _EMBED_CACHE.move_to_end(key)
-        _EMBED_CACHE[key] = value
-        while len(_EMBED_CACHE) > _EMBED_CACHE_MAX:
-            _EMBED_CACHE.popitem(last=False)
-
-
-def _get_cached_embedding(key):
-    with _EMBED_CACHE_LOCK:
-        cached = _EMBED_CACHE.get(key)
-        if cached is None:
-            return None
-        _EMBED_CACHE.move_to_end(key)
-        return cached
-
+"""## Embedding Functions"""
 
 def get_embeddings(client, texts, model="text-embedding-3-small"):
-    """Return embeddings for one or many texts with basic memoization."""
+    """Return embeddings for one or many texts. Always generates fresh embeddings."""
     if isinstance(texts, str):
         single = True
         texts = [texts]
     else:
         single = False
 
-    results = [None] * len(texts)
-    to_fetch = []
-    fetch_indices = []
-
-    for idx, text in enumerate(texts):
-        key = (model, text)
-        cached = _get_cached_embedding(key)
-        if cached is not None:
-            results[idx] = cached
-        else:
-            fetch_indices.append(idx)
-            to_fetch.append(text)
-
-    if to_fetch:
-        response = client.embeddings.create(model=model, input=to_fetch)
-        for idx, data in zip(fetch_indices, response.data):
-            embedding = np.array(data.embedding, dtype=np.float32)
-            key = (model, texts[idx])
-            _cache_embedding(key, embedding)
-            results[idx] = embedding
+    # Always fetch fresh embeddings - no caching
+    response = client.embeddings.create(model=model, input=texts)
+    results = [np.array(data.embedding, dtype=np.float32) for data in response.data]
 
     return results[0] if single else results
 
@@ -181,111 +87,6 @@ def get_question_embedding(client, question):
 def cosine_similarity(a, b):
     """Calculate cosine similarity between two vectors"""
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-
-def load_answer_cache():
-    """Load cached answers from disk"""
-    if Path(ANSWER_CACHE_FILE).exists():
-        with open(ANSWER_CACHE_FILE, 'rb') as f:
-            cache = pickle.load(f)
-        print(f"✓ Loaded {len(cache)} cached answers")
-        return cache
-    return {}
-
-def save_answer_cache(answer_cache):
-    """Save answer cache to disk"""
-    Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
-    with open(ANSWER_CACHE_FILE, 'wb') as f:
-        pickle.dump(answer_cache, f)
-    print(f"✓ Saved {len(answer_cache)} answers to cache")
-
-def find_similar_cached_answer(client, question, mode, answer_cache, threshold=SIMILARITY_THRESHOLD):
-    """
-    Find cached answer for semantically similar question with same mode
-    Returns: (cache_key, cached_data, similarity_score) or (None, None, 0)
-    """
-    if not answer_cache:
-        return None, None, 0
-
-    query_embedding = get_question_embedding(client, question)
-
-    best_match = None
-    best_similarity = 0
-    best_key = None
-
-    for cache_key, cached_data in answer_cache.items():
-        # Must match mode exactly
-        if cached_data.get("mode") != mode:
-            continue
-
-        cached_embedding = cached_data.get("embedding")
-        if cached_embedding is None:
-            continue
-
-        # Convert list back to numpy array
-        cached_embedding = np.array(cached_embedding)
-        similarity = cosine_similarity(query_embedding, cached_embedding)
-
-        if similarity > best_similarity:
-            best_similarity = similarity
-            best_match = cached_data
-            best_key = cache_key
-
-    if best_similarity >= threshold:
-        return best_key, best_match, best_similarity
-
-    return None, None, best_similarity
-
-def cache_answer(answer_cache, question, mode, result, embedding, client):
-    """Store answer with metadata and embedding"""
-    import hashlib
-    cache_key = hashlib.md5(f"{question}|{mode}".encode()).hexdigest()
-
-    answer_cache[cache_key] = {
-        "question": question,
-        "mode": mode,
-        "result": result,
-        "embedding": embedding.tolist(),  # Convert numpy to list for pickle
-        "timestamp": datetime.now().isoformat(),
-        "model": result.get("model_used", "gpt-4o")
-    }
-
-    # Save immediately after adding
-    save_answer_cache(answer_cache)
-    return cache_key
-
-"""## Cache Management Utilities"""
-
-def view_cache_contents():
-    """Display all cached questions"""
-    cache = load_answer_cache()
-    if not cache:
-        print("Cache is empty")
-        return
-
-    print(f"\nCached Answers ({len(cache)} total):")
-    print("="*80)
-    for i, (key, data) in enumerate(cache.items(), 1):
-        print(f"{i}. [{data['mode'].upper()}] {data['question']}")
-        print(f"   Cached: {data['timestamp']}")
-        print(f"   Model: {data.get('model', 'unknown')}")
-        print()
-
-def clear_answer_cache():
-    """Clear all cached answers"""
-    if Path(ANSWER_CACHE_FILE).exists():
-        os.remove(ANSWER_CACHE_FILE)
-        print("✓ Answer cache cleared")
-    else:
-        print("Cache file doesn't exist")
-
-def clear_retrieval_cache():
-    """
-    DEPRECATED: Retrieval cache removed - file_search tool handles caching internally.
-    This function is kept for backward compatibility but does nothing.
-    """
-    import logging
-    log = logging.getLogger(__name__)
-    log.warning("clear_retrieval_cache() is deprecated - file_search tool handles caching")
 
 """## Configuration Presets"""
 
@@ -828,7 +629,7 @@ def analyze_answer_formatting(answer_text, mode="balanced"):
 
 """## Interactive Answer Review"""
 
-def show_answer_with_review(question, mode, hybrid_result, answer_cache, client):
+def show_answer_with_review(question, mode, hybrid_result, client):
     """Display answer with OK/Refresh buttons"""
 
     # Display the answer
@@ -853,8 +654,7 @@ def show_answer_with_review(question, mode, hybrid_result, answer_cache, client)
             clear_output()
             print("♻️  Regenerating answer with fresh data...\n")
 
-            # Clear retrieval cache and regenerate
-            clear_retrieval_cache()
+            # Regenerate with fresh data
             params = get_preset(mode)
 
             new_hybrid_result = answer_with_kg_and_vector(
@@ -868,11 +668,7 @@ def show_answer_with_review(question, mode, hybrid_result, answer_cache, client)
                 preset_params=params
             )
 
-            # Cache the new answer
-            query_embedding = get_question_embedding(client, question)
-            cache_answer(answer_cache, question, mode, new_hybrid_result, query_embedding, client)
-
-            print("\n✓ Fresh answer generated and cached\n")
+            print("\n✓ Fresh answer generated\n")
 
             # Display new answer
             md_text, file_path = export_markdown(final=new_hybrid_result, question=question)
@@ -1964,7 +1760,7 @@ Rules:
         print(f"❌ Error generating quiz: {type(e).__name__}: {e}")
         return []
 
-def show_answer_with_quiz(question, mode, hybrid_result, answer_cache, client):
+def show_answer_with_quiz(question, mode, hybrid_result, client):
     """Display answer with OK/Refresh/Quiz buttons"""
 
     # Display the answer
@@ -1990,7 +1786,7 @@ def show_answer_with_quiz(question, mode, hybrid_result, answer_cache, client):
             clear_output()
             print("♻️  Regenerating answer with fresh data...\n")
 
-            clear_retrieval_cache()
+            # Regenerate with fresh data
             params = get_preset(mode)
 
             new_hybrid_result = answer_with_kg_and_vector(
@@ -2004,10 +1800,7 @@ def show_answer_with_quiz(question, mode, hybrid_result, answer_cache, client):
                 preset_params=params
             )
 
-            query_embedding = get_question_embedding(client, question)
-            cache_answer(answer_cache, question, mode, new_hybrid_result, query_embedding, client)
-
-            print("\n✓ Fresh answer generated and cached\n")
+            print("\n✓ Fresh answer generated\n")
             md_text, file_path = export_markdown(final=new_hybrid_result, question=question)
             print(f"\nExport completed: {file_path}")
 

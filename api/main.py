@@ -9,7 +9,6 @@ import uuid
 import asyncio
 import time
 import secrets
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Tuple, List, Optional
 from datetime import datetime
@@ -404,15 +403,11 @@ async def google_drive_ingest(
 # -----------------------------------------------------------------------------
 # Lazy singletons
 # -----------------------------------------------------------------------------
-@lru_cache(maxsize=1)
 def get_client() -> OpenAI:
-    """Create OpenAI client once, using env/Secret Manager-provided key."""
+    """Create OpenAI client using env/Secret Manager-provided key."""
     if not settings.OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY not configured")
     return OpenAI(api_key=settings.OPENAI_API_KEY)
-
-# Multi-domain KG cache: domain_id -> (G, by_id, name_index)
-_KG_CACHE: Dict[str, Tuple[Any, Dict[str, Any], Dict[str, Any]]] = {}
 
 
 def _download_from_gcs(gcs_path: str, local_path: str) -> bool:
@@ -465,63 +460,58 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
     """
     Load graph artifacts for a specific domain.
     Supports both local files and Google Cloud Storage (gs:// paths).
-    Results are cached per domain for performance.
+    Always loads fresh - no caching.
     
     Args:
         domain_id: Domain identifier (e.g., 'wealth_management')
         
     Returns:
         Tuple of (G, by_id, name_index) for the domain
+        
+    Raises:
+        ValueError: If domain_id is invalid
+        FileNotFoundError: If KG file is not found
+        RuntimeError: If GCS download fails
     """
     from ekg_core import load_kg_from_json
     from api.domains import get_domain
     
-    # Check cache first
-    if domain_id in _KG_CACHE:
-        log.debug(f"Using cached KG for domain: {domain_id}")
-        return _KG_CACHE[domain_id]
+    # Get domain configuration
+    domain_config = get_domain(domain_id)
+    # Use dynamic getter to read env vars at runtime
+    kg_path = domain_config.get_kg_path()
     
-    G = None
-    by_id: Dict[str, Any] = {}
-    name_index: Dict[str, Any] = {}
+    if not kg_path:
+        raise ValueError(f"KG path not configured for domain '{domain_id}'. Set {domain_id.upper()}_KG_PATH environment variable.")
     
-    try:
-        # Get domain configuration
-        domain_config = get_domain(domain_id)
-        kg_path = domain_config.kg_path
+    # Handle GCS paths (gs://bucket/path)
+    if kg_path.startswith("gs://"):
+        # Download from GCS to temporary location
+        import tempfile
+        temp_dir = Path(tempfile.gettempdir()) / "ekg_kg"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        local_path = temp_dir / f"{domain_id}_kg_{int(time.time())}.json"
         
-        # Handle GCS paths (gs://bucket/path)
-        if kg_path.startswith("gs://"):
-            # Download from GCS to local cache
-            cache_dir = Path(settings.CACHE_DIR) / "kg"
-            local_path = cache_dir / f"{domain_id}_kg.json"
-            
-            if not local_path.exists():
-                if not _download_from_gcs(kg_path, str(local_path)):
-                    log.warning(f"Could not download KG for domain '{domain_id}' from GCS")
-                    return G, by_id, name_index
-            
-            kg_path = str(local_path)
-        else:
-            # Resolve relative paths from project root
-            if not os.path.isabs(kg_path):
-                base_dir = os.path.dirname(os.path.dirname(__file__))
-                kg_path = os.path.join(base_dir, kg_path)
+        # Download from GCS - fail explicitly if it doesn't work
+        if not _download_from_gcs(kg_path, str(local_path)):
+            raise RuntimeError(f"Failed to download KG for domain '{domain_id}' from GCS: {kg_path}")
         
-        if os.path.exists(kg_path):
-            log.info(f"Loading KG for domain '{domain_id}' from {kg_path}")
-            G, by_id, name_index = load_kg_from_json(kg_path)
-            log.info(f"✓ Loaded KG for '{domain_id}': {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(name_index)} aliases")
-            
-            # Cache the result
-            _KG_CACHE[domain_id] = (G, by_id, name_index)
-        else:
-            log.warning(f"KG file not found for domain '{domain_id}': {kg_path}")
-            
-    except ValueError as e:
-        log.error(f"Invalid domain: {e}")
-    except Exception as e:
-        log.error(f"KG load failed for domain '{domain_id}': {e}", exc_info=True)
+        if not local_path.exists():
+            raise FileNotFoundError(f"KG file not found after download: {local_path}")
+        
+        kg_path = str(local_path)
+    else:
+        # Resolve relative paths from project root
+        if not os.path.isabs(kg_path):
+            base_dir = os.path.dirname(os.path.dirname(__file__))
+            kg_path = os.path.join(base_dir, kg_path)
+    
+    if not os.path.exists(kg_path):
+        raise FileNotFoundError(f"KG file not found for domain '{domain_id}': {kg_path}")
+    
+    log.info(f"Loading KG for domain '{domain_id}' from {kg_path}")
+    G, by_id, name_index = load_kg_from_json(kg_path)
+    log.info(f"✓ Loaded KG for '{domain_id}': {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(name_index)} aliases")
     
     return G, by_id, name_index
 
@@ -640,11 +630,11 @@ def health():
             health_status["errors"].append(f"Domain {domain_config.domain_id} failed: {str(e)}")
             log.error(f"Domain {domain_config.domain_id} health check failed: {e}")
     
-    # Cache status (file_search tool handles caching internally)
+    # Cache status - caching disabled for fresh answers
     health_status["cache_status"] = {
         "query_cache_size": 0,
         "hits_cache_size": 0,
-        "note": "file_search tool handles caching internally"
+        "note": "Caching disabled - all answers are generated fresh"
     }
     
     # Determine overall status
@@ -675,7 +665,7 @@ def metrics():
         "cache_status": {
             "query_cache_size": 0,
             "hits_cache_size": 0,
-            "note": "file_search tool handles caching internally"
+            "note": "Caching disabled - all answers are generated fresh"
         },
         "timestamp": datetime.utcnow().isoformat()
     }
