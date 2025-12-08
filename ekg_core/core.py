@@ -316,7 +316,7 @@ ANSWER_PRESETS = {
         "lambda_div": 0.6,
         "max_tokens": 6000,
         "max_expanded": 60,
-        "model": "gpt-5-mini",
+        "model": "gpt-5.1",
         "_mode": "balanced",
         "chunk_char_limit": 1400,
         "chunk_sentence_limit": 10,
@@ -326,14 +326,14 @@ ANSWER_PRESETS = {
     },
     "deep": {
         "hops": 2,
-        "k_suggest": 28,
-        "k_candidates": 32,
-        "max_chunks": 15,
-        "k_each": 5,
+        "k_suggest": 35,
+        "k_candidates": 40,
+        "max_chunks": 22,
+        "k_each": 8,
         "lambda_div": 0.75,
         "max_tokens": 20000,
-        "max_expanded": 80,
-        "model": "gpt-5",
+        "max_expanded": 120,
+        "model": "o3-deep-research",
         "_mode": "deep",
         "chunk_char_limit": 2200,
         "chunk_sentence_limit": 16,
@@ -640,23 +640,46 @@ def get_response(message, client, model, vector_ids, system_message=None, stream
     Returns:
         Response object from OpenAI API
     """
+    log = logging.getLogger(__name__)
     input_msgs = []
     if system_message:
         input_msgs.append({"role": "system", "content": system_message})
     input_msgs.append({"role": "user", "content": message})
-    
-    response = client.responses.create(
-        model=model,
-        input=input_msgs,
-        tools=[
-            {
-                "type": "file_search",
-                "vector_store_ids": vector_ids if isinstance(vector_ids, list) else [vector_ids]
-            }
-        ],
-        stream=stream
-    )
-    return response
+
+    # Log the outbound payload (redacted content) for debugging failures
+    try:
+        log.debug(
+            "OpenAI request: model=%s stream=%s vector_store_ids=%s user_chars=%s",
+            model,
+            stream,
+            vector_ids if isinstance(vector_ids, list) else [vector_ids],
+            len(message or ""),
+        )
+    except Exception:
+        pass
+
+    try:
+        response = client.responses.create(
+            model=model,
+            input=input_msgs,
+            tools=[
+                {
+                    "type": "file_search",
+                    "vector_store_ids": vector_ids if isinstance(vector_ids, list) else [vector_ids]
+                }
+            ],
+            stream=stream
+        )
+        return response
+    except Exception as e:
+        log.error(
+            "OpenAI request failed: model=%s stream=%s vector_store_ids=%s error=%s",
+            model,
+            stream,
+            vector_ids if isinstance(vector_ids, list) else [vector_ids],
+            e,
+        )
+        raise
 
 def _slugify(text, max_len=80):
     text = (text or "answer").strip().lower()

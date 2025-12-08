@@ -38,7 +38,7 @@ steps:
       - '--min-instances'
       - '0'
       - '--set-secrets'
-      - 'OPENAI_API_KEY=openai-api-key:latest,SESSION_SECRET_KEY=session-secret-key:latest'
+      - 'OPENAI_API_KEY=openai-api-key:latest,SESSION_SECRET_KEY=session-secret-key:latest,DOC_VECTOR_STORE_ID=doc-vector-store-id:latest,KG_VECTOR_STORE_ID=kg-vector-store-id:latest'
       - '--set-env-vars'
       - 'LOG_LEVEL=INFO,CACHE_DIR=/tmp/ekg_cache,MAX_CACHE_SIZE=1000,CACHE_TTL=3600,WEALTH_MANAGEMENT_KG_PATH=gs://YOUR_BUCKET/kg/wealth_product_kg.json,APF_KG_PATH=gs://YOUR_BUCKET/kg/apf_kg.json'
 

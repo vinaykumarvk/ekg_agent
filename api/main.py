@@ -788,7 +788,28 @@ def answer(req: AskRequest) -> AskResponse:
             raw = agent.answer(enhanced_question)  # dict from orchestrator/core
         except Exception as e:
             log.error(f"Agent execution failed for request {request_id}: {e}")
-            raise HTTPException(status_code=500, detail="Failed to generate answer")
+            
+            # Check for OpenAI API errors
+            error_str = str(e).lower()
+            if "429" in error_str or "quota" in error_str or "rate limit" in error_str:
+                raise HTTPException(
+                    status_code=429,
+                    detail="OpenAI API quota exceeded. Please check your billing and plan limits. "
+                           "See https://platform.openai.com/docs/guides/error-codes/api-errors for details."
+                )
+            elif "401" in error_str or "unauthorized" in error_str or "invalid_api_key" in error_str:
+                raise HTTPException(
+                    status_code=500,
+                    detail="OpenAI API authentication failed. Please check your API key configuration."
+                )
+            elif "503" in error_str or "service unavailable" in error_str:
+                raise HTTPException(
+                    status_code=503,
+                    detail="OpenAI API service is temporarily unavailable. Please try again later."
+                )
+            else:
+                # Generic error - log full details but return user-friendly message
+                raise HTTPException(status_code=500, detail="Failed to generate answer")
         
         # Add domain info to metadata
         if "meta" not in raw or raw["meta"] is None:
