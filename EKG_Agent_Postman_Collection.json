@@ -1,585 +1,356 @@
 {
-  "info": {
-    "name": "EKG Agent API - Complete Testing Collection",
-    "description": "Complete Postman collection for testing EKG Agent API endpoints",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "version": "2.0.0"
-  },
-  "variable": [
-    {
-      "key": "base_url",
-      "value": "https://ekg-service-47249889063.europe-west6.run.app",
-      "type": "string",
-      "description": "Production API base URL"
-    },
-    {
-      "key": "local_url",
-      "value": "http://localhost:8000",
-      "type": "string",
-      "description": "Local development API base URL"
-    }
-  ],
-  "item": [
-    {
-      "name": "Health & Status Endpoints",
-      "item": [
-        {
-          "name": "Health Check - Production",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/health",
-              "host": ["{{base_url}}"],
-              "path": ["health"]
-            },
-            "description": "Check system health and domain status"
-          },
-          "response": []
-        },
-        {
-          "name": "Health Check - Local",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{local_url}}/health",
-              "host": ["{{local_url}}"],
-              "path": ["health"]
-            },
-            "description": "Check system health and domain status (local)"
-          },
-          "response": []
-        },
-        {
-          "name": "List Domains - Production",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/domains",
-              "host": ["{{base_url}}"],
-              "path": ["domains"]
-            },
-            "description": "Get list of available domains"
-          },
-          "response": []
-        },
-        {
-          "name": "List Domains - Local",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{local_url}}/domains",
-              "host": ["{{local_url}}"],
-              "path": ["domains"]
-            },
-            "description": "Get list of available domains (local)"
-          },
-          "response": []
-        },
-        {
-          "name": "Metrics - Production",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/metrics",
-              "host": ["{{base_url}}"],
-              "path": ["metrics"]
-            },
-            "description": "Get performance metrics"
-          },
-          "response": []
-        },
-        {
-          "name": "KG Status - Production",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/kg-status",
-              "host": ["{{base_url}}"],
-              "path": ["kg-status"]
-            },
-            "description": "Check Knowledge Graph file status"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Answer Endpoints - Wealth Management",
-      "item": [
-        {
-          "name": "Basic Query - What is OTP?",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is OTP verification?\",\n  \"domain\": \"wealth_management\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Basic OTP verification question"
-          },
-          "response": []
-        },
-        {
-          "name": "Concise Mode - OTP Process",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is the OTP process?\",\n  \"domain\": \"wealth_management\",\n  \"params\": {\n    \"_mode\": \"concise\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Concise mode - GPT-5-nano (~30-45 seconds)"
-          },
-          "response": []
-        },
-        {
-          "name": "Balanced Mode - Redemption Process",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is mutual fund redemption?\",\n  \"domain\": \"wealth_management\",\n  \"params\": {\n    \"_mode\": \"balanced\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Balanced mode - GPT-5-mini (~45-60 seconds)"
-          },
-          "response": []
-        },
-        {
-          "name": "Deep Mode - Customer Onboarding",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is the complete customer onboarding process?\",\n  \"domain\": \"wealth_management\",\n  \"params\": {\n    \"_mode\": \"deep\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Deep mode - GPT-5 (~2-5 minutes)"
-          },
-          "response": []
-        },
-        {
-          "name": "Order Placement Process",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is order placement?\",\n  \"domain\": \"wealth_management\",\n  \"params\": {\n    \"_mode\": \"balanced\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Order placement process explanation"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Answer Endpoints - APF Domain",
-      "item": [
-        {
-          "name": "APF - What is project approval?",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is project approval?\",\n  \"domain\": \"apf\",\n  \"params\": {\n    \"_mode\": \"concise\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "APF project approval process"
-          },
-          "response": []
-        },
-        {
-          "name": "APF - Project Creation Process",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"How to create a project?\",\n  \"domain\": \"apf\",\n  \"params\": {\n    \"_mode\": \"balanced\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "APF project creation process"
-          },
-          "response": []
-        },
-        {
-          "name": "APF - Approval Workflow",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What are the steps in the APF approval workflow?\",\n  \"domain\": \"apf\",\n  \"params\": {\n    \"_mode\": \"deep\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "APF approval workflow steps"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Conversational Features",
-      "item": [
-        {
-          "name": "Initial Question - OTP",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is OTP verification?\",\n  \"domain\": \"wealth_management\",\n  \"params\": {\n    \"_mode\": \"concise\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Initial question to get response_id for follow-up"
-          },
-          "response": []
-        },
-        {
-          "name": "Follow-up with Response ID",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"How long is the OTP valid?\",\n  \"domain\": \"wealth_management\",\n  \"response_id\": \"YOUR_RESPONSE_ID_HERE\",\n  \"params\": {\n    \"_mode\": \"concise\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Follow-up question using response_id from previous response"
-          },
-          "response": []
-        },
-        {
-          "name": "Conversation with Conversation ID",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What if I don't receive the OTP?\",\n  \"domain\": \"wealth_management\",\n  \"conversation_id\": \"conv-123-456\",\n  \"params\": {\n    \"_mode\": \"balanced\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Question using conversation_id for threading"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Error Testing",
-      "item": [
-        {
-          "name": "Invalid Domain",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"Test question\",\n  \"domain\": \"invalid_domain\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Test with invalid domain (should return 400)"
-          },
-          "response": []
-        },
-        {
-          "name": "Missing Question",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"domain\": \"wealth_management\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Test with missing question field (should return 422)"
-          },
-          "response": []
-        },
-        {
-          "name": "Malformed JSON",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"Test question\",\n  \"domain\": \"wealth_management\",\n  \"invalid_field\": }"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Test with malformed JSON (should return 400)"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Performance Testing",
-      "item": [
-        {
-          "name": "Quick Response Test",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is OTP?\",\n  \"domain\": \"wealth_management\",\n  \"params\": {\n    \"_mode\": \"concise\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Quick response test (concise mode - ~30-45 seconds)"
-          },
-          "response": []
-        },
-        {
-          "name": "Medium Response Test",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is the redemption process?\",\n  \"domain\": \"wealth_management\",\n  \"params\": {\n    \"_mode\": \"balanced\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Medium response test (balanced mode - ~45-60 seconds)"
-          },
-          "response": []
-        },
-        {
-          "name": "Long Response Test",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"What is the complete customer onboarding and KYC process?\",\n  \"domain\": \"wealth_management\",\n  \"params\": {\n    \"_mode\": \"deep\"\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/answer",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "answer"]
-            },
-            "description": "Long response test (deep mode - ~2-5 minutes)"
-          },
-          "response": []
-        }
-      ]
-    }
-  ],
-  "event": [
-    {
-      "listen": "prerequest",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Set request timestamp",
-          "pm.globals.set('request_timestamp', new Date().toISOString());"
-        ]
-      }
-    },
-    {
-      "listen": "test",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Basic response validation",
-          "pm.test('Response status is successful', function () {",
-          "    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
-          "});",
-          "",
-          "// For answer endpoints, validate response structure",
-          "if (pm.request.url.path.includes('/v1/answer')) {",
-          "    pm.test('Response has required fields', function () {",
-          "        const jsonData = pm.response.json();",
-          "        pm.expect(jsonData).to.have.property('response_id');",
-          "        pm.expect(jsonData).to.have.property('markdown');",
-          "        pm.expect(jsonData).to.have.property('meta');",
-          "    });",
-          "    ",
-          "    pm.test('Response ID is valid UUID', function () {",
-          "        const jsonData = pm.response.json();",
-          "        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;",
-          "        pm.expect(jsonData.response_id).to.match(uuidRegex);",
-          "    });",
-          "    ",
-          "    pm.test('Response time is reasonable', function () {",
-          "        pm.expect(pm.response.responseTime).to.be.below(300000); // 5 minutes",
-          "    });",
-          "}",
-          "",
-          "// For health endpoint, validate structure",
-          "if (pm.request.url.path.includes('/health')) {",
-          "    pm.test('Health response has required fields', function () {",
-          "        const jsonData = pm.response.json();",
-          "        pm.expect(jsonData).to.have.property('status');",
-          "        pm.expect(jsonData).to.have.property('domains');",
-          "    });",
-          "}",
-          "",
-          "// Log response time",
-          "console.log('Response time:', pm.response.responseTime + 'ms');"
-        ]
-      }
-    }
-  ]
+	"info": {
+		"_postman_id": "ekg-agent-test-suite",
+		"name": "EKG Agent API Test Suite",
+		"description": "Test suite for EKG Agent API with refactored code and concise/balanced/deep modes",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Health Check",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Response has status field\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData).to.have.property('status');",
+							"    pm.expect(jsonData.status).to.eql('healthy');",
+							"});",
+							"",
+							"pm.test(\"OpenAI is connected\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.openai_status).to.eql('connected');",
+							"});",
+							"",
+							"pm.test(\"Domains are loaded\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.domains).to.be.an('object');",
+							"    pm.expect(Object.keys(jsonData.domains).length).to.be.above(0);",
+							"});",
+							"",
+							"pm.test(\"Concise mode is available\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.available_modes).to.include('concise');",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/health",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"health"
+					]
+				},
+				"description": "Check if the API server is healthy and all services are running"
+			},
+			"response": []
+		},
+		{
+			"name": "2. List Available Domains",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Response has domains array\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData).to.have.property('domains');",
+							"    pm.expect(jsonData.domains).to.be.an('array');",
+							"});",
+							"",
+							"pm.test(\"At least one domain exists\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.domains.length).to.be.above(0);",
+							"});",
+							"",
+							"pm.test(\"Domain has required fields\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    if (jsonData.domains.length > 0) {",
+							"        var domain = jsonData.domains[0];",
+							"        pm.expect(domain).to.have.property('domain_id');",
+							"        pm.expect(domain).to.have.property('name');",
+							"        pm.expect(domain).to.have.property('default_vectorstore_id');",
+							"        pm.expect(domain).to.have.property('kg_vectorstore_id');",
+							"    }",
+							"});",
+							"",
+							"// Store first domain ID for use in other requests",
+							"if (pm.response.json().domains.length > 0) {",
+							"    pm.environment.set('test_domain_id', pm.response.json().domains[0].domain_id);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/domains",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"domains"
+					]
+				},
+				"description": "Get list of all available domains with their configurations"
+			},
+			"response": []
+		},
+		{
+			"name": "3. Answer Question - Concise Mode",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Response has required fields\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData).to.have.property('response_id');",
+							"    pm.expect(jsonData).to.have.property('markdown');",
+							"    pm.expect(jsonData).to.have.property('meta');",
+							"});",
+							"",
+							"pm.test(\"Mode is concise\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.meta.mode).to.eql('concise');",
+							"});",
+							"",
+							"pm.test(\"Answer is not empty\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.markdown).to.be.a('string');",
+							"    pm.expect(jsonData.markdown.length).to.be.above(100);",
+							"});",
+							"",
+							"pm.test(\"Response time is acceptable\", function () {",
+							"    pm.expect(pm.response.responseTime).to.be.below(60000);",
+							"});",
+							"",
+							"// Store response ID for conversational test",
+							"pm.environment.set('last_response_id', pm.response.json().response_id);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"question\": \"What is CRR and PRR logic for order placement?\",\n    \"domain\": \"wealth_management\",\n    \"params\": {\n        \"_mode\": \"concise\"\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{base_url}}/v1/answer",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"v1",
+						"answer"
+					]
+				},
+				"description": "Test answer generation with concise mode - should return a focused, brief answer"
+			},
+			"response": []
+		},
+		{
+			"name": "4. Answer Question - Balanced Mode",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Mode is balanced\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.meta.mode).to.eql('balanced');",
+							"});",
+							"",
+							"pm.test(\"Answer is comprehensive\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.markdown.length).to.be.above(500);",
+							"});",
+							"",
+							"pm.test(\"Answer contains relevant content\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    var answer = jsonData.markdown.toLowerCase();",
+							"    pm.expect(answer).to.include('otp');",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"question\": \"What is OTP verification and how does it work?\",\n    \"domain\": \"wealth_management\",\n    \"params\": {\n        \"_mode\": \"balanced\"\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{base_url}}/v1/answer",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"v1",
+						"answer"
+					]
+				},
+				"description": "Test answer generation with balanced mode - should return a well-structured, moderate-length answer"
+			},
+			"response": []
+		},
+		{
+			"name": "5. Answer Question - Deep Mode",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"",
+							"pm.test(\"Mode is deep\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.meta.mode).to.eql('deep');",
+							"});",
+							"",
+							"pm.test(\"Answer is comprehensive and detailed\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.markdown.length).to.be.above(1000);",
+							"});",
+							"",
+							"pm.test(\"Answer has structure\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    var answer = jsonData.markdown;",
+							"    // Check for markdown structure (headers, lists, etc.)",
+							"    pm.expect(answer).to.match(/##|###|\\*|\\-|\\d+\\./);",
+							"});",
+							"",
+							"pm.test(\"Response includes metadata\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.meta).to.be.an('object');",
+							"    pm.expect(jsonData.meta).to.have.property('domain');",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"question\": \"Explain the complete order placement workflow including all validations, checks, and approval processes\",\n    \"domain\": \"wealth_management\",\n    \"params\": {\n        \"_mode\": \"deep\"\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{base_url}}/v1/answer",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"v1",
+						"answer"
+					]
+				},
+				"description": "Test answer generation with deep mode - should return a comprehensive, detailed answer with extensive information"
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Set base URL if not already set",
+					"if (!pm.environment.get('base_url')) {",
+					"    pm.environment.set('base_url', 'http://localhost:8000');",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Global test: Check response time",
+					"pm.test('Response time is less than 60 seconds', function () {",
+					"    pm.expect(pm.response.responseTime).to.be.below(60000);",
+					"});"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		}
+	]
 }

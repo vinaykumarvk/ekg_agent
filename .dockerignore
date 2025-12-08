@@ -14,9 +14,9 @@ __pycache__/
 *.pem
 *.key
 
-# Big/local data & artifacts (keep structure with .gitkeep in git if needed)
+# Big/local data & artifacts
+# KG files are loaded from Google Cloud Storage at runtime (not bundled in image)
 data/
-!data/.gitkeep
 *.pkl
 *.bin
 *.pdf
@@ -25,3 +25,26 @@ data/
 # Notebooks & misc
 *.ipynb
 .DS_Store
+
+# Test files (not needed in production)
+test_*.py
+*_test.py
+tests/
+test_concise_mode.py
+test_concise_direct.py
+
+# Postman collections and test guides (but keep KG JSON files)
+EKG_Agent_Postman_Collection.json
+POSTMAN_TEST_GUIDE.md
+
+# Documentation (keep only essential)
+*.md
+!README.md
+DEPLOYMENT_ASSESSMENT.md
+POSTMAN_TEST_GUIDE.md
+PRODUCT_ARCHITECTURE_SPECIFICATION.md
+
+# Temporary files
+*.log
+*.tmp
+/tmp/

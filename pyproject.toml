@@ -23,6 +23,7 @@ dependencies = [
   "google-auth>=2.34",
   "google-auth-httplib2>=0.2.0",
   "google-auth-oauthlib>=1.2",
+  "google-cloud-storage>=2.14",
 ]
 
 [tool.hatch.build.targets.wheel]

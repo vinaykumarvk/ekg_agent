@@ -11,7 +11,7 @@ import time
 import secrets
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Tuple, List
+from typing import Any, Dict, Tuple, List, Optional
 from datetime import datetime
 
 from fastapi import (
@@ -22,8 +22,8 @@ from fastapi import (
     UploadFile,
     File,
     status,
-    RequestValidationError,
 )
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -36,10 +36,6 @@ from api.schemas import (
     AskResponse,
     VectorStoreUploadResponse,
     GoogleDriveIngestRequest,
-    StructuredAnswerRequest,
-    StructuredAnswerResponse,
-    WebSearchRequest,
-    WebSearchResponse,
 )
 from api.settings import settings
 from api.security import (
@@ -127,6 +123,29 @@ def humanize_bytes(value: int) -> str:
     return f"{value} bytes"
 
 
+def ensure_session(request: Request) -> None:
+    if "session_id" not in request.session:
+        request.session["session_id"] = generate_session_identifier()
+
+
+def get_csrf_token(request: Request) -> str:
+    token = request.session.get("csrf_token")
+    if not token:
+        token = generate_csrf_token()
+        request.session["csrf_token"] = token
+    return token
+
+
+def validate_csrf(request: Request, submitted_token: Optional[str]) -> None:
+    expected = request.session.get("csrf_token")
+    if not expected or not submitted_token or not secrets.compare_digest(expected, submitted_token):
+        raise HTTPException(status_code=400, detail="Invalid CSRF token")
+
+
+def is_authenticated(request: Request) -> bool:
+    return bool(request.session.get("is_authenticated"))
+
+
 templates.env.globals.update(
     max_file_size=MAX_FILE_SIZE_BYTES,
     app_name="EKG Vector Store Admin",
@@ -148,29 +167,6 @@ def apply_security_headers(response):
     for key, value in SECURITY_HEADERS.items():
         response.headers.setdefault(key, value)
     return response
-
-
-def ensure_session(request: Request) -> None:
-    if "session_id" not in request.session:
-        request.session["session_id"] = generate_session_identifier()
-
-
-def get_csrf_token(request: Request) -> str:
-    token = request.session.get("csrf_token")
-    if not token:
-        token = generate_csrf_token()
-        request.session["csrf_token"] = token
-    return token
-
-
-def validate_csrf(request: Request, submitted_token: str | None) -> None:
-    expected = request.session.get("csrf_token")
-    if not expected or not submitted_token or not secrets.compare_digest(expected, submitted_token):
-        raise HTTPException(status_code=400, detail="Invalid CSRF token")
-
-
-def is_authenticated(request: Request) -> bool:
-    return bool(request.session.get("is_authenticated"))
 
 
 def render_template(name: str, request: Request, context: dict[str, Any]):
@@ -418,9 +414,57 @@ def get_client() -> OpenAI:
 # Multi-domain KG cache: domain_id -> (G, by_id, name_index)
 _KG_CACHE: Dict[str, Tuple[Any, Dict[str, Any], Dict[str, Any]]] = {}
 
+
+def _download_from_gcs(gcs_path: str, local_path: str) -> bool:
+    """
+    Download a file from Google Cloud Storage.
+    
+    Args:
+        gcs_path: GCS path in format gs://bucket/path/to/file
+        local_path: Local path to save the file
+        
+    Returns:
+        True if download successful, False otherwise
+    """
+    try:
+        from google.cloud import storage
+        
+        # Parse gs://bucket/path format
+        if not gcs_path.startswith("gs://"):
+            log.error(f"Invalid GCS path format: {gcs_path}")
+            return False
+        
+        path_parts = gcs_path[5:].split("/", 1)
+        if len(path_parts) != 2:
+            log.error(f"Invalid GCS path format: {gcs_path}")
+            return False
+        
+        bucket_name, blob_path = path_parts
+        
+        log.info(f"Downloading KG from GCS: {gcs_path}")
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_path)
+        
+        # Ensure local directory exists
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        
+        blob.download_to_filename(local_path)
+        log.info(f"✓ Downloaded KG from GCS to {local_path}")
+        return True
+        
+    except ImportError:
+        log.warning("google-cloud-storage not installed, cannot download from GCS")
+        return False
+    except Exception as e:
+        log.error(f"Failed to download from GCS: {e}")
+        return False
+
+
 def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str, Any]]:
     """
     Load graph artifacts for a specific domain.
+    Supports both local files and Google Cloud Storage (gs:// paths).
     Results are cached per domain for performance.
     
     Args:
@@ -446,10 +490,23 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
         domain_config = get_domain(domain_id)
         kg_path = domain_config.kg_path
         
-        # Resolve relative paths from project root
-        if not os.path.isabs(kg_path):
-            base_dir = os.path.dirname(os.path.dirname(__file__))
-            kg_path = os.path.join(base_dir, kg_path)
+        # Handle GCS paths (gs://bucket/path)
+        if kg_path.startswith("gs://"):
+            # Download from GCS to local cache
+            cache_dir = Path(settings.CACHE_DIR) / "kg"
+            local_path = cache_dir / f"{domain_id}_kg.json"
+            
+            if not local_path.exists():
+                if not _download_from_gcs(kg_path, str(local_path)):
+                    log.warning(f"Could not download KG for domain '{domain_id}' from GCS")
+                    return G, by_id, name_index
+            
+            kg_path = str(local_path)
+        else:
+            # Resolve relative paths from project root
+            if not os.path.isabs(kg_path):
+                base_dir = os.path.dirname(os.path.dirname(__file__))
+                kg_path = os.path.join(base_dir, kg_path)
         
         if os.path.exists(kg_path):
             log.info(f"Loading KG for domain '{domain_id}' from {kg_path}")
@@ -474,7 +531,7 @@ def get_agent(domain_id: str, vectorstore_id: str, params: Dict[str, Any] | None
     
     Args:
         domain_id: Domain identifier
-        vectorstore_id: Vector store ID
+        vectorstore_id: Vector store ID (for documents)
         params: Optional parameters for the agent
         
     Returns:
@@ -482,6 +539,11 @@ def get_agent(domain_id: str, vectorstore_id: str, params: Dict[str, Any] | None
     """
     client = get_client()
     G, by_id, name_index = load_graph_artifacts(domain_id)
+    
+    # Get domain config to access kg_vectorstore_id
+    from api.domains import get_domain
+    domain_config = get_domain(domain_id)
+    
     return EKGAgent(
         client=client,
         vs_id=vectorstore_id,
@@ -489,6 +551,7 @@ def get_agent(domain_id: str, vectorstore_id: str, params: Dict[str, Any] | None
         by_id=by_id,
         name_index=name_index,
         preset_params=params or {},
+        kg_vector_store_id=domain_config.kg_vectorstore_id  # Use domain's KG vector store ID
     )
 
 # -----------------------------------------------------------------------------
@@ -511,6 +574,7 @@ def list_available_domains():
                 "kg_nodes": G.number_of_nodes() if G else 0,
                 "kg_edges": G.number_of_edges() if G else 0,
                 "default_vectorstore_id": domain_config.default_vectorstore_id,
+                "kg_vectorstore_id": domain_config.kg_vectorstore_id,
             })
         except Exception as e:
             log.error(f"Error loading domain '{domain_config.domain_id}': {e}")
@@ -522,6 +586,7 @@ def list_available_domains():
                 "kg_nodes": 0,
                 "kg_edges": 0,
                 "default_vectorstore_id": domain_config.default_vectorstore_id,
+                "kg_vectorstore_id": domain_config.kg_vectorstore_id,
                 "error": str(e),
             })
     
@@ -575,16 +640,12 @@ def health():
             health_status["errors"].append(f"Domain {domain_config.domain_id} failed: {str(e)}")
             log.error(f"Domain {domain_config.domain_id} health check failed: {e}")
     
-    # Check cache status
-    try:
-        from ekg_core.core import _Q_CACHE, _HITS_CACHE
-        health_status["cache_status"] = {
-            "query_cache_size": _Q_CACHE.size(),
-            "hits_cache_size": _HITS_CACHE.size()
-        }
-    except Exception as e:
-        health_status["cache_status"] = {"error": str(e)}
-        log.warning(f"Cache status check failed: {e}")
+    # Cache status (file_search tool handles caching internally)
+    health_status["cache_status"] = {
+        "query_cache_size": 0,
+        "hits_cache_size": 0,
+        "note": "file_search tool handles caching internally"
+    }
     
     # Determine overall status
     if health_status["status"] == "healthy" and any(
@@ -612,8 +673,9 @@ def metrics():
             "count": len(_response_times)
         },
         "cache_status": {
-            "query_cache_size": _Q_CACHE.size() if '_Q_CACHE' in globals() else 0,
-            "hits_cache_size": _HITS_CACHE.size() if '_HITS_CACHE' in globals() else 0
+            "query_cache_size": 0,
+            "hits_cache_size": 0,
+            "note": "file_search tool handles caching internally"
         },
         "timestamp": datetime.utcnow().isoformat()
     }
@@ -759,271 +821,3 @@ def answer(req: AskRequest) -> AskResponse:
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-# -----------------------------------------------------------------------------
-# Structured Answer Endpoint (New)
-# -----------------------------------------------------------------------------
-@app.post("/v1/answer-structured", response_model=StructuredAnswerResponse)
-def answer_structured(req: StructuredAnswerRequest) -> StructuredAnswerResponse:
-    """
-    New endpoint specifically for structured input with custom system prompts.
-    This endpoint is designed for complex workflows like internal capabilities analysis.
-    """
-    start_time = time.time()
-    request_id = str(uuid.uuid4())
-    
-    try:
-        log.info(f"Processing structured request {request_id} for domain {req.domain}")
-        
-        from api.domains import get_domain
-        
-        # Get domain configuration
-        try:
-            domain_config = get_domain(req.domain)
-        except ValueError as e:
-            log.warning(f"Invalid domain {req.domain}: {e}")
-            raise HTTPException(status_code=400, detail=f"Invalid domain: {str(e)}")
-        
-        # Use request vectorstore_id or domain default
-        vectorstore_id = req.vectorstore_id or domain_config.default_vectorstore_id
-        if not vectorstore_id:
-            log.error(f"No vector store for domain {req.domain}")
-            raise HTTPException(
-                status_code=400,
-                detail=f"No vector store specified for domain '{req.domain}'. "
-                       f"Please provide vectorstore_id in request or configure default for domain."
-            )
-        
-        # Generate unique response ID
-        response_id = str(uuid.uuid4())
-        
-        # Create agent for this domain + vector store
-        # Merge user params with preset parameters
-        from ekg_core.core import get_preset
-        mode = req.params.get("_mode", "balanced") if req.params else "balanced"
-        preset_params = get_preset(mode)
-        if req.params:
-            preset_params.update(req.params)  # User params override preset
-        
-        log.info(f"Creating agent for domain {req.domain}, mode {mode}")
-        agent = get_agent(req.domain, vectorstore_id, preset_params)
-        
-        # Convert StructuredQuestionPayload to dict for agent
-        question_payload_dict = {
-            "system_prompt": req.question_payload.system_prompt,
-            "requirement": req.question_payload.requirement,
-            "bank_profile": req.question_payload.bank_profile or {},
-            "market_subrequirements": req.question_payload.market_subrequirements or []
-        }
-        
-        # Handle structured input
-        log.info(f"Processing structured input for request {request_id}")
-        try:
-            raw = agent.answer_structured(question_payload_dict)
-        except Exception as e:
-            log.error(f"Structured answer execution failed for request {request_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Failed to generate structured answer: {str(e)}")
-        
-        # Add domain info to metadata
-        if "meta" not in raw or raw["meta"] is None:
-            raw["meta"] = {}
-        raw["meta"]["domain"] = req.domain
-        raw["meta"]["vectorstore_id"] = vectorstore_id
-        raw["meta"]["response_id"] = response_id
-        raw["meta"]["mode"] = mode
-        
-        # Add timing information
-        processing_time = time.time() - start_time
-        raw["meta"]["processing_time_seconds"] = round(processing_time, 2)
-        raw["meta"]["request_id"] = request_id
-        
-        log.info(f"Structured request {request_id} completed in {processing_time:.2f}s")
-        
-        # Extract JSON data and answer
-        json_data = raw.get("json_data")
-        answer_text = raw.get("answer", "")
-        sources = raw.get("curated_chunks") or raw.get("sources")
-        
-        return StructuredAnswerResponse(
-            response_id=response_id,
-            json_data=json_data,
-            answer=answer_text if not json_data else None,  # Only include answer if JSON parsing failed
-            sources=sources,
-            meta=raw.get("meta")
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        # Surface a clean 500 with message; full stacks remain in logs
-        log.error(f"Unexpected error in structured request {request_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-# -----------------------------------------------------------------------------
-# Web Search / Market Requirements Endpoint
-# -----------------------------------------------------------------------------
-@app.post("/req_desc_web_search", response_model=WebSearchResponse)
-def req_desc_web_search(req: WebSearchRequest) -> WebSearchResponse:
-    """
-    Endpoint for decomposing requirements into market subrequirements.
-    Uses web search to research market-standard expectations.
-    """
-    start_time = time.time()
-    request_id = str(uuid.uuid4())
-    
-    try:
-        log.info(f"Processing web search request {request_id} for requirement: {req.requirement[:100]}...")
-        
-        # Generate unique response ID
-        response_id = str(uuid.uuid4())
-        
-        # Get OpenAI client
-        client = get_client()
-        
-        # Build WEB_SEARCH_SYSTEM_PROMPT (exact format matching user's provided prompt)
-        profile = req.profile or {}
-        requirement = req.requirement
-        
-        # Build the prompt exactly as provided - with requirement and profile embedded
-        WEB_SEARCH_SYSTEM_PROMPT = f"""
-You are a Wealth Management Product Analyst researching market-standard expectations for a given requirement.
-
-INPUT
-
-You receive:
-
-requirement: {requirement}
-
-profile: {json.dumps(profile, indent=2, ensure_ascii=False) if profile else "{}"}
-
-TASK
-
-Holistic framing
-
-First, step back and interpret the requirement in its broader business context
-(customer segment, products, channels, regulatory environment, and the profile).
-
-Decomposition
-
-Decompose the requirement into a set of upto 10 non-overlapping subrequirements that,
-together, fully cover the requirement from a modern wealth-platform perspective.
-
-Market enrichment
-
-Use web search to infer what modern wealth management platforms typically provide
-for each of these subrequirements for similar banks.
-
-Focus on capabilities and sub-features, not vendor names or specific products.
-
-OUTPUT (JSON ONLY, NO PROSE, NO MARKDOWN)
-
-Return a single JSON object with this shape:
-
-{{
-"market_subrequirements": [
-  {{
-    "id": "M1",
-    "title": "Short name of the subrequirement",
-    "description": "1–3 sentence description of what the platform should do",
-    "priority": "must_have" | "nice_to_have"
-  }},
-  ...
-]
-}}
-
-RULES
-
-Return between 3 and 10 subrequirements.
-
-Provide description of each subrequirment in <= 100 words. 
-
-Make subrequirements non-overlapping and reasonably granular.
-
-Keep them vendor-agnostic (generic capability statements).
-
-Do NOT include any text outside the JSON object.
-"""
-        
-        # Build user message exactly as specified in the example
-        user_msg = json.dumps({
-            "requirement": requirement,
-        })
-        
-        # Build the API payload
-        api_payload = {
-            "model": req.model,
-            "input": [
-                {"role": "system", "content": WEB_SEARCH_SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg}
-            ],
-            "tools": [{
-                "type": "web_search",
-            }]
-        }
-        
-        # Log the exact payload being sent
-        log.info(f"API Payload for request {request_id}:")
-        log.info(f"  Model: {api_payload['model']}")
-        log.info(f"  System message length: {len(api_payload['input'][0]['content'])} chars")
-        log.info(f"  User message: {api_payload['input'][1]['content'][:200]}...")
-        log.info(f"  Tools: {api_payload['tools']}")
-        
-        # Call LLM with web search tool
-        log.info(f"Calling LLM with model {req.model} and web_search tool for request {request_id}")
-        try:
-            resp = client.responses.create(**api_payload)
-            answer = getattr(resp, "output_text", None) or getattr(resp, "output_texts", [""])[0]
-        except Exception as e:
-            log.error(f"LLM call failed for request {request_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Failed to generate response: {str(e)}")
-        
-        # Parse JSON from answer
-        json_data = None
-        answer_text = answer
-        
-        try:
-            # Try to extract JSON from markdown code blocks
-            if "```json" in answer:
-                json_start = answer.find("```json") + 7
-                json_end = answer.find("```", json_start)
-                json_str = answer[json_start:json_end].strip()
-                json_data = json.loads(json_str)
-            elif "```" in answer:
-                json_start = answer.find("```") + 3
-                json_end = answer.find("```", json_start)
-                json_str = answer[json_start:json_end].strip()
-                json_data = json.loads(json_str)
-            else:
-                # Try parsing the entire answer as JSON
-                json_data = json.loads(answer.strip())
-        except (json.JSONDecodeError, ValueError) as e:
-            log.warning(f"JSON parsing failed for request {request_id}: {e}")
-            # Keep answer_text for debugging
-            pass
-        
-        # Add timing information
-        processing_time = time.time() - start_time
-        
-        meta = {
-            "response_id": response_id,
-            "model": req.model,
-            "processing_time_seconds": round(processing_time, 2),
-            "request_id": request_id
-        }
-        
-        log.info(f"Web search request {request_id} completed in {processing_time:.2f}s")
-        
-        return WebSearchResponse(
-            response_id=response_id,
-            json_data=json_data,
-            answer=answer_text if not json_data else None,
-            sources=None,  # Web search doesn't return sources in the same way
-            meta=meta
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        # Surface a clean 500 with message; full stacks remain in logs
-        log.error(f"Unexpected error in web search request {request_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")

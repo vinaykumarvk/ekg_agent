@@ -22,11 +22,9 @@ except ImportError:
     gr = None
 
 import html
-import re, json
-import threading
-
 import json
 import re
+import threading
 import os
 import textwrap
 from datetime import datetime
@@ -280,19 +278,14 @@ def clear_answer_cache():
     else:
         print("Cache file doesn't exist")
 
-# Uncomment to use:
-# view_cache_contents()
-# clear_answer_cache()
-
 def clear_retrieval_cache():
-    """Clear the query and hits caches for vector store retrieval"""
-    global _Q_CACHE, _HITS_CACHE
-    _Q_CACHE.clear()
-    _HITS_CACHE.clear()
+    """
+    DEPRECATED: Retrieval cache removed - file_search tool handles caching internally.
+    This function is kept for backward compatibility but does nothing.
+    """
     import logging
     log = logging.getLogger(__name__)
-    log.info("Retrieval cache cleared")
-    log.info(f"Q_CACHE size: {_Q_CACHE.size()}, HITS_CACHE size: {_HITS_CACHE.size()}")
+    log.warning("clear_retrieval_cache() is deprecated - file_search tool handles caching")
 
 """## Configuration Presets"""
 
@@ -357,6 +350,195 @@ def get_preset(mode="balanced"):
         mode = "balanced"
     return ANSWER_PRESETS[mode]
 
+"""## Prompt Templates (PROMPT_SET)
+
+Centralized prompt templates for flexible prompt management.
+Modify prompts here without touching code logic.
+"""
+
+file_search_message = """
+You are an internal wealth-management product knowledge assistant.
+
+You have access to the following:
+1. A structured set of business concepts, entities, and relationships derived from our internal knowledge graph:
+<KG_CONTEXT>
+{kg_text}
+</KG_CONTEXT>
+
+2. A document vector store containing detailed product, process, and journey information.
+
+The user has provided several questions and hints that together express ONE underlying information need.
+Treat ALL of the following as different perspectives of the same broader inquiry:
+
+<USER_QUESTIONS>
+{expanded_queries_str}
+</USER_QUESTIONS>
+
+------------------------------------------------------------
+YOUR TASK
+------------------------------------------------------------
+
+1) **Understand the Unified Intent**
+   Infer the single business problem or information objective these questions collectively express.
+   Reformulate this as a clear, concise intent statement.
+
+2) **Use the KG Context Internally**
+   Use the entities and relationships in <KG_CONTEXT> ONLY for internal reasoning—
+   NOT for display, NOT for enumeration, NOT for explanation.
+   They exist only to guide your understanding of concepts and their interactions.
+
+3) **Retrieve the Most Relevant Knowledge**
+   Internally issue file_search queries into the document vector store by combining:
+      • the unified intent
+      • the expanded understanding of the topic
+      • relevant concepts implied by the KG context
+   Do NOT mention file_search, retrieval, vector stores, or any internal mechanisms in your final answer.
+
+4) **Synthesize ONE Integrated Explanation**
+   Using the retrieved content:
+      • Produce a cohesive, structured narrative that directly answers the unified intent.
+      • Merge overlapping points and remove redundancies.
+      • Ensure the explanation is generic and platform-agnostic.
+      • Do NOT reference clients, banks, proprietary implementations, or example organizations.
+      • Do NOT mention knowledge graphs, nodes, edges, triples, metadata, or relationships.
+      • Do NOT start the answer with statements like "Below is an integrated view…",
+        "The KG shows…", "From the knowledge graph…", or any similar framing.
+      • Simply present the explanation directly and professionally, as if preparing internal
+        product documentation or briefing an experienced BA.
+
+5) **Final Output Format (Strict)**
+Respond ONLY with the following JSON object:
+
+{{
+  "stepback_intent": "A clear statement of the unified intent.",
+  "expanded_question": "A concise, enriched reformulation.",
+  "business_entities": ["entity 1", "entity 2", "..."],
+  "answer": "A single integrated answer written in **proper, clean Markdown**, with headings, subheadings, bullet points, or numbered lists.\n             The answer must NOT include the KG, nodes, relationships, internal tools, or any meta-commentary."
+}}
+
+Notes:
+- The **answer** field must contain fully valid Markdown **inside the JSON** (no backticks).
+- Do NOT add any prose outside the JSON.
+- Do NOT confirm the usage of KG or documents.
+- Do NOT reference the prompt, instructions, or tools in the answer.
+"""
+
+stepback_message = """
+You are a wealth-management product knowledge assistant.
+
+You ALWAYS receive one user question, and you MUST analyse it without asking the user to repeat it.
+
+You have access to a file_search tool connected to a KG vector store
+containing natural-language descriptions of platform knowledge-graph nodes.
+
+===========================================================
+YOUR MANDATORY TASKS
+===========================================================
+
+For the given user question (provided in the `original_question` field below):
+
+1) STEP-BACK INTENT
+   Rewrite the question in a more generic, clarified formulation that captures
+   the underlying business intent. No loss of meaning. No assumptions.
+
+2) EXPANDED QUESTION
+   Expand the question into a richer, more detailed version intended to improve
+   retrieval from the KG. Keep it concise, business-focused, and not rhetorical.
+
+3) EXTRACT BUSINESS ENTITIES
+   Extract key BUSINESS entities mentioned or implied in the expanded question.
+   Examples: workflows, screens, documents, validations, client data entities,
+   approval processes, reports, regulatory aspects, system modules, etc.
+   Output as a list of short canonical phrases.
+
+4) RETRIEVE RELEVANT KG NODES
+   - You MUST call the file_search tool.
+   - Build your search query using a combination of:
+        a) the expanded question
+        b) the extracted entities (as keywords)
+   - Retrieve up to 10 (not necessarily exactly 10) relevant KG nodes.
+   - From each result, extract ONLY the KG node NAME (not description).
+
+5) OUTPUT FORMAT (STRICT)
+   You MUST output ONLY the following JSON object:
+
+   {{
+     "original_question": "...",
+     "stepback_question": "...",
+     "expanded_question": "...",
+     "entities": ["...", "..."],
+     "node_names": ["...", "..."]
+   }}
+
+   - All string fields may contain markdown formatting.
+   - "entities" must be an array of strings.
+   - "node_names" must be an array of strings. If no matches, return [].
+
+===========================================================
+STRICT RULES
+===========================================================
+
+- DO NOT ask the user to provide the question again.
+- DO NOT output explanations, commentary, or extra text.
+- DO NOT refuse unless the input is empty.
+- DO NOT repeat tool call results; only extract node names.
+- DO NOT invent node names; use only those returned by file_search.
+
+===========================================================
+INPUT TO PROCESS
+===========================================================
+
+original_question: {question}
+"""
+
+formatting_message = """
+You are a senior editor specializing in transforming research reports into
+clear, polished, publication-ready documents.
+
+Your task is to refine the following research output:
+
+<RAW_ANSWER>
+{answer}
+</RAW_ANSWER>
+
+------------------------------------------------------------
+INSTRUCTIONS
+------------------------------------------------------------
+
+1. **Improve Language & Clarity**
+   - Rewrite the content to be clearer, sharper, and more professional.
+   - Improve flow, transitions, and readability without changing factual meaning.
+   - Remove repetition and tighten overly long phrasing.
+
+2. **Improve Structure & Formatting**
+   - Apply clean Markdown formatting.
+   - Use headings, subheadings, numbered lists, and bullet points where helpful.
+   - Ensure the document reads like a polished research brief or executive summary.
+
+3. **Handle References Correctly**
+   - Remove all inline references, markers, or citation tags.
+   - Collect all references mentioned anywhere in the text.
+   - Present them in a **single consolidated "References" section** at the end.
+   - If a reference appears multiple times, list it only once.
+
+4. **Preserve Meaning, Remove Noise**
+   - Do NOT hallucinate any new facts.
+   - Preserve technical accuracy, definitions, and logical structure.
+   - Eliminate filler language or unnecessary qualifiers.
+
+5. **Output Format**
+   - Return ONLY the refined research report as a **Markdown document**.
+   - No extra commentary, no explanation of changes.
+"""
+
+PROMPT_SET = {
+    "concise": file_search_message,
+    "balanced": file_search_message,
+    "deep": file_search_message,
+    "stepback": stepback_message,
+    "formatting": formatting_message,
+}
+
 """# Initialise functions
 
 ## Utility Functions
@@ -415,6 +597,66 @@ def get_output_text(resp):
     except Exception:
         pass
     return str(resp) if resp is not None else ""
+
+def parse_llm_json(text):
+    """
+    Robust JSON parsing from LLM output.
+    Handles markdown fences, control characters, and various edge cases.
+    """
+    # 1. Strip markdown fences if present
+    cleaned_text = text.strip()
+    if cleaned_text.startswith("```json"):
+        cleaned_text = cleaned_text[len("```json"):].strip()
+    if cleaned_text.endswith("```"):
+        cleaned_text = cleaned_text[:-len("```")].strip()
+
+    try:
+        return json.loads(cleaned_text)
+    except json.JSONDecodeError as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.warning(f"Initial JSONDecodeError: {e}. Attempting further cleanup.")
+        # 2. Try to remove invalid control characters (0x00-0x1F, 0x7F) that are not allowed in JSON strings
+        # This will remove characters like vertical tab (\x0b), form feed (\x0c) etc.
+        cleaned_text_stage2 = re.sub(r'[\x00-\x1f\x7f]', '', cleaned_text)
+        try:
+            return json.loads(cleaned_text_stage2)
+        except json.JSONDecodeError as e2:
+            log.warning(f"Second JSONDecodeError after control character removal: {e2}. Could not parse LLM response.")
+            raise
+
+def get_response(message, client, model, vector_ids, system_message=None, stream=False):
+    """
+    Wrapper for OpenAI Responses API with file_search tool support.
+    
+    Args:
+        message: User message content
+        client: OpenAI client instance
+        model: Model name
+        vector_ids: List of vector store IDs for file_search
+        system_message: Optional system message (if None, only user message is sent)
+        stream: Whether to stream the response
+    
+    Returns:
+        Response object from OpenAI API
+    """
+    input_msgs = []
+    if system_message:
+        input_msgs.append({"role": "system", "content": system_message})
+    input_msgs.append({"role": "user", "content": message})
+    
+    response = client.responses.create(
+        model=model,
+        input=input_msgs,
+        tools=[
+            {
+                "type": "file_search",
+                "vector_store_ids": vector_ids if isinstance(vector_ids, list) else [vector_ids]
+            }
+        ],
+        stream=stream
+    )
+    return response
 
 def _slugify(text, max_len=80):
     text = (text or "answer").strip().lower()
@@ -592,14 +834,15 @@ def show_answer_with_review(question, mode, hybrid_result, answer_cache, client)
             clear_retrieval_cache()
             params = get_preset(mode)
 
-            kg_result = answer_with_kg(
-                q=question, G=G, by_id=by_id, name_index=name_index,
-                llm_client=client, preset_params=params
-            )
-
-            new_hybrid_result = hybrid_answer(
-                q=question, kg_result=kg_result, by_id=by_id,
-                client=client, vs_id=VECTOR_STORE_ID, preset_params=params
+            new_hybrid_result = answer_with_kg_and_vector(
+                q=question,
+                G=G,
+                by_id=by_id,
+                name_index=name_index,
+                client=client,
+                kg_vector_store_id=VECTOR_STORE_ID,
+                doc_vector_store_id=VECTOR_STORE_ID,
+                preset_params=params
             )
 
             # Cache the new answer
@@ -621,7 +864,395 @@ def show_answer_with_review(question, mode, hybrid_result, answer_cache, client)
     print("="*80)
     button_box = widgets.HBox([ok_button, refresh_button])
 
-"""## Step 1: Entity Suggestion"""
+"""## New KG Workflow Functions (Using file_search tool)"""
+
+def map_node_names_to_ids(
+    node_names: List[str],
+    by_id: Dict[str, Dict],
+    name_index: Dict[str, Any] = None
+) -> List[str]:
+    """
+    Map node names returned by GPT to actual node IDs in the graph.
+
+    Args:
+        node_names: List of node names from GPT (e.g., ["customer card", "product selection screen"])
+        by_id: Your existing node lookup dict {node_id: node_data}
+        name_index: Optional name-to-ID index for faster lookup
+
+    Returns:
+        List of node IDs that exist in the graph
+    """
+    node_ids = []
+    not_found = []
+
+    for node_name in node_names:
+        node_name_lower = _norm(node_name)
+
+        # Strategy 1: Use name_index if available (fastest)
+        if name_index:
+            # Try exact match
+            if node_name_lower in name_index:
+                ids = name_index[node_name_lower]
+                if isinstance(ids, (list, tuple)):
+                    node_ids.extend([str(id) for id in ids])
+                else:
+                    node_ids.append(str(ids))
+                continue
+
+        # Strategy 2: Search through by_id (fallback)
+        found = False
+        for node_id, node_data in by_id.items():
+            # Get node name from data
+            actual_name = _norm(
+                node_data.get('name') or
+                node_data.get('node_name') or
+                node_data.get('label') or
+                str(node_id)
+            )
+
+            # Check for match
+            if node_name_lower == actual_name or node_name_lower in actual_name or actual_name in node_name_lower:
+                node_ids.append(str(node_id))
+                found = True
+                break
+
+        if not found:
+            not_found.append(node_name)
+
+    # Report not found nodes (optional logging)
+    if not_found:
+        import logging
+        log = logging.getLogger(__name__)
+        log.debug(f"Could not find {len(not_found)} nodes in graph: {not_found[:5]}")
+
+    # Deduplicate
+    return list(set(node_ids))
+
+
+def get_relevant_nodes(
+    question: str,
+    kg_vector_store_id: str,
+    client,
+    model: str = "gpt-4o",
+    max_nodes: int = 10
+) -> Dict[str, Any]:
+    """
+    Use GPT with file_search to get relevant nodes, entities, and stepback.
+
+    Args:
+        question: User question
+        kg_vector_store_id: Vector store ID for KG nodes
+        client: OpenAI client
+        model: Model name
+        max_nodes: Maximum nodes to retrieve
+
+    Returns:
+        {
+            "original_question": "...",
+            "stepback_question": "...",
+            "expanded_question": "...",
+            "entities": ["...", "..."],
+            "node_names": ["...", "..."]
+        }
+    """
+    message = PROMPT_SET["stepback"].format(question=question)
+    vector_ids = [kg_vector_store_id] if isinstance(kg_vector_store_id, str) else kg_vector_store_id
+
+    try:
+        resp = get_response(message, client, model, vector_ids)
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.error(f"Error in response from OpenAI - get_relevant_nodes: {e}")
+        # Fallback: return minimal structure
+        return {
+            "original_question": question,
+            "stepback_question": question,
+            "expanded_question": question,
+            "entities": [],
+            "node_names": []
+        }
+
+    # Parse response
+    output_text = get_output_text(resp)
+
+    # Use robust JSON parsing
+    try:
+        result = parse_llm_json(output_text)
+        return result
+    except (json.JSONDecodeError, Exception) as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.warning(f"Could not parse JSON from get_relevant_nodes: {e}")
+        log.debug(f"Raw output: {output_text[:500]}")
+
+        # Fallback: return minimal structure
+        return {
+            "original_question": question,
+            "stepback_question": question,
+            "expanded_question": question,
+            "entities": [],
+            "node_names": []
+        }
+
+
+def get_relevant_subgraph(
+    question: str,
+    G,
+    by_id: Dict[str, Dict],
+    kg_vector_store_id: str,
+    client,
+    stepback_response: Dict,
+    name_index: Dict[str, Any] = None,
+    edge_type_whitelist: List[str] = None,
+    hops: int = 1,
+    max_expanded: int = 60
+) -> Dict[str, Any]:
+    """
+    Complete new workflow: GPT file search + graph expansion.
+
+    Replaces the old 4-step process.
+
+    Args:
+        question: User question
+        G: NetworkX graph
+        by_id: Node lookup dict
+        kg_vector_store_id: Vector store ID for KG
+        client: OpenAI client
+        stepback_response: Result from get_relevant_nodes
+        name_index: Optional name-to-ID index
+        edge_type_whitelist: Optional edge type filter
+        hops: Graph expansion hops
+        max_expanded: Maximum nodes to expand
+
+    Returns:
+        {
+            "question_analysis": {...},  # Stepback, entities, etc.
+            "seed_node_ids": [...],       # Starting nodes
+            "expanded_node_ids": [...],   # All nodes in subgraph
+            "edges": [...],               # Edges in subgraph
+            "nodes": {}                   # Node data for subgraph
+        }
+    """
+    analysis = stepback_response
+
+    # STEP 2: Map node names to IDs
+    seed_node_ids = map_node_names_to_ids(
+        node_names=analysis.get('node_names', []),
+        by_id=by_id,
+        name_index=name_index
+    )
+
+    if not seed_node_ids:
+        return {
+            "question_analysis": analysis,
+            "seed_node_ids": [],
+            "expanded_node_ids": [],
+            "edges": [],
+            "nodes": {}
+        }
+
+    # STEP 3: Expand graph from seed nodes
+    expanded_node_ids, edges = expand_nodes(
+        G=G,
+        seed_ids=seed_node_ids,
+        hops=hops,
+        edge_type_whitelist=edge_type_whitelist,
+        max_expanded=max_expanded
+    )
+
+    # STEP 4: Get node data for expanded nodes
+    nodes = {}
+    for node_id in expanded_node_ids:
+        if node_id in by_id:
+            nodes[node_id] = by_id[node_id]
+
+    return {
+        "question_analysis": analysis,
+        "seed_node_ids": seed_node_ids,
+        "expanded_node_ids": expanded_node_ids,
+        "edges": edges,
+        "nodes": nodes
+    }
+
+
+def build_kg_guided_queries(
+    question: str,
+    kg_result: Dict[str, Any],
+    by_id: Dict[str, Dict],
+    max_queries: int = 12
+) -> List[str]:
+    """Build KG-guided queries for vector retrieval."""
+    queries = []
+
+    # Get data from kg_result
+    expanded_node_ids = kg_result.get("expanded_node_ids", [])
+    edges = kg_result.get("edges", [])
+    analysis = kg_result.get("question_analysis", {})
+
+    # 1. Original question
+    queries.append(question)
+
+    # 2. Stepback/expanded
+    if "stepback_question" in analysis:
+        queries.append(analysis["stepback_question"])
+    if "expanded_question" in analysis:
+        queries.append(analysis["expanded_question"])
+
+    # 3. Entity-focused
+    node_names = []
+    for node_id in expanded_node_ids[:8]:
+        if node_id in by_id:
+            name = by_id[node_id].get('name', by_id[node_id].get('node_name', str(node_id)))
+            node_names.append(name)
+
+    for entity in node_names[:5]:
+        queries.append(f"{question} {entity}")
+
+    # 4. Relationship-focused
+    node_lookup = {}
+    for node_id in expanded_node_ids:
+        if node_id in by_id:
+            name = by_id[node_id].get('name', by_id[node_id].get('node_name', str(node_id)))
+            node_lookup[node_id] = name
+
+    for edge in edges[:10]:
+        source_name = node_lookup.get(edge.get("source_id"), "")
+        target_name = node_lookup.get(edge.get("target_id"), "")
+        edge_type = edge.get("type", "RELATED")
+
+        if source_name and target_name:
+            queries.append(f"{source_name} {edge_type} {target_name}")
+
+    # 5. Deduplicate
+    seen = set()
+    unique_queries = []
+    for q in queries:
+        q_lower = _norm(q)
+        if q_lower and q_lower not in seen:
+            seen.add(q_lower)
+            unique_queries.append(q)
+
+    return unique_queries[:max_queries]
+
+
+def generate_kg_text(
+    kg_result: Dict[str, Any],
+    by_id: Dict[str, Dict],
+) -> str:
+    """
+    Generate formatted KG text for prompt context.
+
+    Args:
+        kg_result: Result from get_relevant_subgraph
+        by_id: Node lookup dict
+
+    Returns:
+        Formatted KG text string
+    """
+    expanded_node_ids = kg_result.get("expanded_node_ids", [])
+    edges = kg_result.get("edges", [])
+    analysis = kg_result.get("question_analysis", {})
+
+    # Build compact node list
+    nodes_summary = []
+    for node_id in expanded_node_ids[:40]:  # Limit to 40 nodes
+        if node_id in by_id:
+            name = by_id[node_id].get('name', by_id[node_id].get('node_name', str(node_id)))
+            node_type = by_id[node_id].get('node_type', by_id[node_id].get('type', 'Entity'))
+            nodes_summary.append(f"• {name} ({node_type})")
+
+    # Build compact edge list
+    node_lookup = {}
+    for node_id in expanded_node_ids:
+        if node_id in by_id:
+            name = by_id[node_id].get('name', by_id[node_id].get('node_name', str(node_id)))
+            node_lookup[node_id] = name
+
+    edges_summary = []
+    for edge in edges[:50]:  # Limit to 50 edges
+        source = node_lookup.get(edge.get("source_id"), "?")
+        target = node_lookup.get(edge.get("target_id"), "?")
+        rel_type = edge.get("type", "RELATED")
+        edges_summary.append(f"• {source} --[{rel_type}]→ {target}")
+
+    kg_structure_text = f"""
+The following entities and relationships are relevant to your question:
+
+ENTITIES:
+{chr(10).join(nodes_summary)}
+
+RELATIONSHIPS:
+{chr(10).join(edges_summary)}
+
+This structure shows WHAT entities exist and HOW they relate.
+Use this to understand the architecture and connections.
+The actual detailed documentation will be retrieved via file_search.
+"""
+    return kg_structure_text.strip()
+
+
+def stream_response(message, client, model, vector_ids, system_message=None):
+    """
+    Stream a response from the Responses API including tool calls.
+    Handles:
+      - output_text.delta
+      - tool_call events
+      - tool_result events
+    """
+    # Always stream here – this function is for streaming usage
+    iterator = get_response(message, client, model, vector_ids, system_message=system_message, stream=True)
+
+    full_text = ""
+
+    for event in iterator:
+        # Safely convert event to dict
+        data = event.model_dump() if hasattr(event, 'model_dump') else dict(event) if isinstance(event, dict) else {}
+        etype = data.get("type", "")
+
+        # -----------------------------
+        # 1. TEXT CHUNKS (main streaming)
+        # -----------------------------
+        if "output_text.delta" in etype or "delta" in etype:
+            delta = data.get("delta", "")
+            if isinstance(delta, dict):
+                chunk = delta.get("text", "")
+            elif isinstance(delta, str):
+                chunk = delta
+            else:
+                chunk = ""
+
+            if chunk:
+                print(chunk, end="", flush=True)
+                full_text += chunk
+
+        # -----------------------------
+        # 2. TOOL CALL START
+        # -----------------------------
+        elif "tool_call" in etype:
+            # Optional: print something or ignore
+            tool_type = data.get("tool", {}).get("type") if isinstance(data.get("tool"), dict) else None
+            # You can comment this out if you don't want to see tool events
+            pass
+
+        # -----------------------------
+        # 3. TOOL RESULTS RETURNING
+        # -----------------------------
+        elif "tool_result" in etype:
+            # Optional: hide, print, or log tool results
+            pass
+
+        # -----------------------------
+        # 4. COMPLETION EVENT
+        # -----------------------------
+        elif "completed" in etype or "done" in etype:
+            # Optional: final marker
+            pass
+
+    print()  # newline at end
+    return full_text
+
+"""## Step 1: Entity Suggestion (Legacy - kept for backward compatibility)"""
 
 def stepback_entity_candidates(q, llm_client, model="gpt-4o", k_suggest=20, tone="executive"):
     system = "You are an analyst for a Wealth Management application. Respond ONLY with JSON: {\"entities\": [...]}. No extra text."
@@ -809,125 +1440,7 @@ def node_context_from_evidence(edge_evidence, by_id):
 
 """## Generate Answer from KG"""
 
-# def grounded_answer_llm(q, nodes, edges, by_id, llm_client, model="gpt-4o", max_tokens=3000, preset_params=None):
-#     if preset_params:
-#         max_tokens = preset_params.get("max_tokens", max_tokens)
-#         model = preset_params.get("model", model)
 
-#     def _fmt_node(n):
-#         if isinstance(n, dict):
-#             return {"id": n.get("id"), "name": n.get("name"), "type": n.get("type")}
-#         meta = by_id.get(n, {})
-#         return {"id": n, "name": meta.get("name") or str(n), "type": meta.get("type")}
-
-#     def _fmt_edge(e):
-#         if isinstance(e, dict):
-#             return {"source": e.get("source_id"), "target": e.get("target_id"), "type": e.get("type")}
-#         return {"source": str(e), "target": str(e), "type": "related"}
-
-#     compact_nodes = [_fmt_node(n) for n in (nodes or [])]
-#     compact_edges = [_fmt_edge(e) for e in (edges or [])]
-
-#     edge_evidence = collect_edge_evidence(edges or [], nodes or [])
-#     node_context = node_context_from_evidence(edge_evidence, by_id)
-
-#     system_msg = "You are a precise wealth-management assistant. Use ONLY the provided graph context. If uncertain, mark it 'unverified'."
-#     user_msg = f"""## Question
-# {q}
-
-# ## KG Nodes
-# {json.dumps(compact_nodes[:30], ensure_ascii=False)}
-
-# ## KG Edges
-# {json.dumps(compact_edges[:40], ensure_ascii=False)}
-
-# Use the evidence provided. Do not invent."""
-
-#     try:
-#         resp = llm_client.responses.create(
-#             model=model,
-#             input=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-#             max_output_tokens=max_tokens
-#         )
-#         answer_text = getattr(resp, "output_text", "") or ""
-#     except Exception as e:
-#         answer_text = f"_Error: {type(e).__name__}_"
-
-#     return {
-#         "answer": answer_text,
-#         "grounding": {"Question": q, "Nodes": compact_nodes, "Edges": compact_edges, "NodeContext": node_context},
-#         "meta": {"model": model, "nodes": len(compact_nodes), "edges": len(compact_edges)}
-#     }
-
-def verify_answer_grounding(answer_text, chunks, client, threshold=0.50):
-    """
-    Verify that answer statements are supported by retrieved chunks
-    Returns: dict with confidence score and unsupported claims
-    """
-    # Extract claims from answer (simple sentence splitting)
-    sentences = [s.strip() for s in answer_text.split('.') if len(s.strip()) > 20]
-
-    if not sentences or not chunks:
-        return {
-            "confidence": 0.0,
-            "supported_count": 0,
-            "total_claims": len(sentences),
-            "unsupported_claims": []
-        }
-
-    supported_count = 0
-    unsupported = []
-
-    # Sample sentences to avoid excessive API calls
-    sample_size = min(15, len(sentences))
-    sampled_sentences = sentences[:sample_size]
-
-    sentence_embeddings = get_embeddings(client, sampled_sentences)
-
-    top_chunks = []
-    for chunk in chunks[:10]:
-        chunk_text = chunk.get("text", "")
-        if not chunk_text:
-            continue
-
-        cached_embedding = chunk.get("_embedding")
-        if cached_embedding is None or chunk.get("_embedding_source") != chunk_text[:CHUNK_EMBED_MAX_CHARS]:
-            cached_embedding = get_question_embedding(client, chunk_text[:CHUNK_EMBED_MAX_CHARS])
-            chunk["_embedding"] = cached_embedding
-            chunk["_embedding_source"] = chunk_text[:CHUNK_EMBED_MAX_CHARS]
-
-        top_chunks.append(cached_embedding)
-
-    if not top_chunks:
-        return {
-            "confidence": 0.0,
-            "supported_count": 0,
-            "total_claims": len(sampled_sentences),
-            "unsupported_claims": sampled_sentences[:3]
-        }
-
-    chunk_matrix = np.stack(top_chunks)
-    chunk_norms = np.linalg.norm(chunk_matrix, axis=1)
-    chunk_norms[chunk_norms == 0] = 1.0
-
-    for sentence, sent_embedding in zip(sampled_sentences, sentence_embeddings):
-        sent_norm = np.linalg.norm(sent_embedding) or 1.0
-        similarities = chunk_matrix @ sent_embedding / (chunk_norms * sent_norm)
-        max_similarity = float(np.max(similarities))
-
-        if max_similarity >= threshold:
-            supported_count += 1
-        else:
-            unsupported.append(sentence[:100])
-
-    confidence = supported_count / len(sampled_sentences) if sampled_sentences else 0
-
-    return {
-        "confidence": confidence,
-        "supported_count": supported_count,
-        "total_claims": len(sampled_sentences),
-        "unsupported_claims": unsupported[:3]  # Return max 3 examples
-    }
 
 def grounded_answer_llm(q, nodes, edges, by_id, llm_client, model="gpt-4o", max_tokens=3000, preset_params=None):
     """Generate answer from KG context only with enhanced formatting"""
@@ -1163,960 +1676,6 @@ def answer_with_kg(q, G, by_id, name_index, llm_client, hops=1, k_suggest=20, k_
     data["supporting_edges"] = expanded_edges
     return data
 
-"""## Vector Store Retrieval"""
-
-# Global caches with size limits and TTL
-_Q_CACHE = LRUCache()  # Uses settings defaults
-_HITS_CACHE = LRUCache(max_size=500, ttl=1800)  # 30 minutes TTL for hits
-
-def programmatic_search(client, vs_id, q, k=3):
-    res = client.vector_stores.search(vector_store_id=vs_id, query=q)
-    items = []
-    for r in getattr(res, "data", []) or []:
-        text = ""
-        if getattr(r, "content", None) and len(r.content):
-            text = getattr(r.content[0], "text", "")
-        items.append({
-            "filename": getattr(r, "filename", None),
-            "file_id": getattr(r, "file_id", None),
-            "score": getattr(r, "score", None),
-            "text": text[:2500],
-            "query": q
-        })
-    return items[:k]
-
-def retrieve_parallel(client, vs_id, queries, k_each=3, max_workers=6):
-    uniq = [q for q in queries if q and not _Q_CACHE.get(q)]
-    for q in uniq:
-        _Q_CACHE.set(q, True)
-
-    def _fetch(q):
-        cached_hits = _HITS_CACHE.get(q)
-        if cached_hits is not None:
-            return cached_hits
-        try:
-            hits = programmatic_search(client, vs_id, q, k=k_each)
-        except Exception as e:
-            import logging
-            log = logging.getLogger(__name__)
-            log.warning(f"Vector search failed for query '{q[:50]}...': {e}")
-            hits = []
-        _HITS_CACHE.set(q, hits)
-        return hits
-
-    pool = []
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = {ex.submit(_fetch, q): q for q in uniq}
-        for f in as_completed(futures):
-            pool.extend(f.result() or [])
-    return pool
-
-def text_jaccard(a, b):
-    A = set((a or "").lower().split())
-    B = set((b or "").lower().split())
-    if not A or not B:
-        return 0.0
-    return len(A & B) / len(A | B)
-
-def mmr_merge(pool, k_final=10, lambda_div=0.4):
-    seen = set()
-    dedup = []
-    for it in pool:
-        key = (it.get("filename"), (it.get("text") or "")[:200])
-        if key not in seen:
-            seen.add(key)
-            dedup.append(it)
-
-    scores = [it.get("score") or 0.0 for it in dedup]
-    if scores:
-        lo, hi = min(scores), max(scores)
-        for it in dedup:
-            s = it.get("score") or 0.0
-            it["norm_score"] = 0.0 if hi == lo else (s - lo) / (hi - lo)
-    else:
-        for it in dedup:
-            it["norm_score"] = 0.0
-
-    selected = []
-    while dedup and len(selected) < k_final:
-        best, best_val = None, -1e9
-        for cand in dedup:
-            relevance = cand["norm_score"]
-            diversity_pen = 0.0
-            if selected:
-                sim = max(text_jaccard(cand["text"], s["text"]) for s in selected)
-                diversity_pen = sim
-            val = (1 - lambda_div) * relevance - lambda_div * diversity_pen
-            if val > best_val:
-                best, best_val = cand, val
-        selected.append(best)
-        dedup.remove(best)
-
-    return selected
-
-CHUNK_EMBED_MAX_CHARS = 800
-
-
-def rerank_chunks_by_relevance(client, question, chunks, top_k=None, min_chunks=6):
-    """
-    Re-rank retrieved chunks by actual relevance to the main question
-    using embeddings and ensure minimum chunks for completeness
-    """
-    if not chunks:
-        return chunks
-
-    # Get question embedding
-    q_embedding = get_question_embedding(client, question)
-    q_norm = np.linalg.norm(q_embedding) or 1.0
-
-    # Score each chunk
-    for chunk in chunks:
-        chunk_text = chunk.get("text", "")
-        if not chunk_text:
-            chunk["relevance_score"] = 0.0
-            continue
-
-        # Get chunk embedding
-        cached_embedding = chunk.get("_embedding")
-        if cached_embedding is None or chunk.get("_embedding_source") != chunk_text[:CHUNK_EMBED_MAX_CHARS]:
-            cached_embedding = get_question_embedding(client, chunk_text[:CHUNK_EMBED_MAX_CHARS])
-            chunk["_embedding"] = cached_embedding
-            chunk["_embedding_source"] = chunk_text[:CHUNK_EMBED_MAX_CHARS]
-
-        chunk_embedding = cached_embedding
-        chunk_norm = np.linalg.norm(chunk_embedding) or 1.0
-
-        # Calculate relevance (cosine similarity)
-        relevance = float(np.dot(q_embedding, chunk_embedding) / (q_norm * chunk_norm))
-
-        # Combine with original score (if exists)
-        original_score = chunk.get("norm_score", 0.5)
-        chunk["relevance_score"] = 0.7 * relevance + 0.3 * original_score
-
-    # Sort by relevance
-    chunks.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
-
-    # Adaptive threshold based on score distribution
-    scores = [c.get("relevance_score", 0) for c in chunks]
-
-    if scores:
-        # Use 15th percentile for very permissive threshold
-        percentile_15 = sorted(scores)[max(1, len(scores)//7)]
-        RELEVANCE_THRESHOLD = max(0.32, percentile_15 - 0.08)
-    else:
-        RELEVANCE_THRESHOLD = 0.32
-
-    filtered_chunks = [c for c in chunks if c.get("relevance_score", 0) >= RELEVANCE_THRESHOLD]
-
-    # CRITICAL: Ensure minimum chunks for completeness
-    if len(filtered_chunks) < min_chunks:
-        # Use MORE chunks when available
-        target_count = max(min_chunks, int(len(chunks) * 0.6))  # Use 60% of available chunks
-        filtered_chunks = chunks[:target_count]
-        print(f"  ⚠️ Only {len([c for c in filtered_chunks if c.get('relevance_score', 0) >= RELEVANCE_THRESHOLD])} chunks above threshold. Using top {len(filtered_chunks)} chunks.")
-
-    return filtered_chunks[:top_k] if top_k else filtered_chunks
-
-def expand_chunk_context(chunks):
-    """
-    Ensure chunks have complete context and aren't truncated mid-sentence
-    """
-    expanded = []
-
-    for chunk in chunks:
-        text = chunk.get('text', '')
-
-        # If text seems truncated (doesn't end with sentence punctuation)
-        if text and len(text) > 100:
-            # Check if ends mid-sentence
-            last_chars = text.rstrip()[-5:]
-            if not any(text.rstrip().endswith(p) for p in ['.', '!', '?', ':', ';', '"', ')', ']']):
-                # Add ellipsis to indicate continuation
-                text = text.rstrip() + '...'
-
-        chunk['text'] = text
-        expanded.append(chunk)
-
-    return expanded
-
-"""## Hybrid Pipeline Helpers"""
-
-_STOPWORDS = {
-    "the", "and", "that", "with", "from", "this", "have", "will", "could",
-    "would", "should", "shall", "there", "their", "which", "about",
-    "these", "those", "into", "through", "while", "where", "when", "what",
-    "your", "does", "each", "such", "being", "also", "only", "over",
-    "other", "under", "after", "before", "because", "between", "within"
-}
-
-_SEGMENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
-
-
-def _keyword_set(text: str) -> Set[str]:
-    return {
-        w for w in re.findall(r"\b\w+\b", (text or "").lower())
-        if len(w) > 3 and w not in _STOPWORDS
-    }
-
-
-def _smart_trim_passage(text: str, question: str, char_limit: int, max_segments: int) -> str:
-    """Trim passages to fit mode-specific budgets while keeping salient details."""
-    if not text:
-        return ""
-
-    clean_text = text.strip()
-    if not clean_text:
-        return ""
-
-    segments = [seg.strip() for seg in _SEGMENT_SPLIT_RE.split(clean_text) if seg.strip()]
-
-    # Fast path when text already within budgets
-    if (not char_limit or len(clean_text) <= char_limit) and (
-        not max_segments or len(segments) <= max_segments
-    ):
-        return clean_text
-
-    keywords = _keyword_set(question)
-    if not keywords:
-        keywords = _keyword_set(clean_text)
-
-    scored_indices = []
-    for idx, seg in enumerate(segments):
-        words = set(re.findall(r"\b\w+\b", seg.lower()))
-        overlap = len(keywords & words)
-        scored_indices.append((idx, overlap, len(seg)))
-
-    # Always prefer the first segment for context
-    selected = {0}
-    if len(segments) > 1:
-        selected.add(len(segments) - 1)
-
-    # Sort by overlap (desc), then longer segments, then original order
-    for idx, overlap, seg_len in sorted(
-        scored_indices,
-        key=lambda item: (-item[1], -item[2], item[0])
-    ):
-        if idx in selected:
-            continue
-        if max_segments and len(selected) >= max_segments:
-            break
-        selected.add(idx)
-
-    ordered_indices = sorted(selected)
-
-    trimmed_segments = []
-    total_chars = 0
-
-    for idx in ordered_indices:
-        seg = segments[idx]
-        if not seg:
-            continue
-
-        projected = total_chars + len(seg) + (1 if trimmed_segments else 0)
-        if char_limit and projected > char_limit:
-            remaining = char_limit - total_chars - (1 if trimmed_segments else 0)
-            if remaining <= 0:
-                break
-            seg = textwrap.shorten(
-                seg,
-                width=max(remaining, len("…") + 1),
-                placeholder="…"
-            )
-            projected = total_chars + len(seg) + (1 if trimmed_segments else 0)
-
-        trimmed_segments.append(seg)
-        total_chars = projected
-
-        if char_limit and total_chars >= char_limit:
-            break
-        if max_segments and len(trimmed_segments) >= max_segments:
-            break
-
-    final_text = "\n".join(trimmed_segments).strip()
-
-    if not final_text:
-        return textwrap.shorten(clean_text, width=max(char_limit or 200, 120), placeholder="…")
-
-    if len(final_text) < len(clean_text):
-        if not final_text.endswith("…"):
-            final_text = final_text.rstrip(".;, -") + "…"
-
-    return final_text
-
-# # def build_grounded_prompt(question, compact_nodes, compact_edges, node_context, chunks, instruction=None, preset_params=None):
-# #     # Determine answer depth from preset
-# #     if preset_params:
-# #         mode = preset_params.get("_mode", "balanced")
-# #     else:
-# #         mode = "balanced"
-
-# #     # Mode-specific instructions
-# #     if mode == "concise":
-# #         default_instruction = (
-# #             "Provide a focused answer using ONLY the KG and passages below. "
-# #             "Cite as [1], [2]. Be direct and specific. "
-# #             "Every factual statement MUST have a citation."
-# #         )
-# #     elif mode == "deep":
-# #         default_instruction = (
-# #             "Provide a COMPREHENSIVE and DETAILED answer using ALL information available in the KG context and passages below.\n\n"
-
-# #             "EXAMPLE OF EXCELLENT ANSWER STRUCTURE:\n"
-# #             "Question: What is the CRR and PRR logic for order placement?\n\n"
-
-# #             "Answer:\n"
-# #             "1. Overview and Definition\n"
-# #             "   The CRR (Customer Risk Rating) and PRR (Product Risk Rating) logic is a validation mechanism "
-# #             "that compares the customer's risk profile against the product's risk profile during order placement [1]. "
-# #             "This ensures suitable investment recommendations.\n\n"
-
-# #             "2. Detailed Logic and Rules\n"
-# #             "   The system applies the following decision rules:\n"
-# #             "   - If PRR ≤ CRR: Order proceeds without warning [2]\n"
-# #             "   - If PRR = CRR + 1: Warning displayed, requires confirmation [3]\n"
-# #             "   - If PRR = CRR + 2: Different behavior by channel [4]:\n"
-# #             "     * RM Portal: Warning with approval workflow [5]\n"
-# #             "     * Client Portal: Hard stop, order cannot proceed [6]\n"
-# #             "   - If PRR > CRR + 2: Hard stop in all channels [7]\n\n"
-
-# #             "3. Channel-Specific Workflows\n"
-# #             "   [Detailed breakdown by channel with citations]\n\n"
-
-# #             "4. Approval Process\n"
-# #             "   [Step-by-step approval flow with citations]\n\n"
-
-# #             "5. Exceptions and Edge Cases\n"
-# #             "   [Any variations or special scenarios]\n\n"
-
-# #             "YOUR TASK - Follow this pattern:\n"
-# #             "✓ Start with clear overview/definition\n"
-# #             "✓ Break down into logical numbered sections (5-8 sections for complex topics)\n"
-# #             "✓ Within each section, use sub-bullets or numbered sub-points\n"
-# #             "✓ Cite EVERY factual statement with [1], [2], [3], etc.\n"
-# #             "✓ Include ALL details, rules, conditions, and exceptions from passages\n"
-# #             "✓ When sources provide step-by-step processes, reproduce them completely\n"
-# #             "✓ When sources mention variations (e.g., 'Implementation A vs B'), cover both\n"
-# #             "✓ Use confident, authoritative language - avoid hedging when sources are clear\n"
-# #             "✓ Synthesize information across multiple passages for complete coverage\n"
-# #             "✓ Aim for thoroughness: 1500-3000 words when sources are detailed\n\n"
-
-# #             "WHAT TO AVOID:\n"
-# #             "✗ Do NOT add information not present in sources\n"
-# #             "✗ Do NOT use phrases like 'possibly', 'might', 'may be' unless source uses them\n"
-# #             "✗ Do NOT omit important details that are in the sources\n"
-# #             "✗ Do NOT create vague summaries - be specific with rules, numbers, conditions\n\n"
-
-# #             "If sources are comprehensive → Your answer must be comprehensive\n"
-# #             "If sources have gaps → Note gaps briefly at the very end only"
-# #         )
-# #     else:  # balanced
-# #         default_instruction = (
-# #             "Provide a clear answer using ONLY the KG and passages below. "
-# #             "Include main points with explanations. Cite as [1], [2]. "
-# #             "State information confidently when supported by sources. "
-# #             "Every factual statement MUST have a citation."
-# #         )
-
-# #     instructions = instruction or default_instruction
-
-# #     lines = ["You are a precise wealth-management assistant.", instructions, "", "## Question", question, ""]
-
-# #     if compact_nodes:
-# #         lines.append("## KG Nodes")
-# #         for n in compact_nodes[:50]:
-# #             lines.append(f"- {n.get('name')} ({n.get('type')}) [id={n.get('id')}]")
-# #         lines.append("")
-
-# #     if compact_edges:
-# #         lines.append("## KG Edges")
-# #         for e in compact_edges[:80]:
-# #             lines.append(f"- {e.get('source')} --({e.get('type')})-> {e.get('target')}")
-# #         lines.append("")
-
-# #     if node_context:
-# #         lines.append("## KG Context")
-# #         for nid, ctx in list(node_context.items())[:30]:
-# #             lines.append(f"- {nid}:")
-# #             lines.append(indent(ctx[:1500]))
-# #         lines.append("")
-
-# #     lines.append("## Retrieved Passages")
-# #     for i, c in enumerate(chunks, 1):
-# #         src = c.get("filename") or c.get("file_id")
-# #         txt = (c.get("text") or "")[:1800]
-# #         lines.append(f"[{i}] ({src})")
-# #         lines.append(indent(txt))
-# #         lines.append("")
-
-# #     return "\n".join(lines)
-
-# def build_grounded_prompt(question, compact_nodes, compact_edges, node_context, chunks, instruction=None, preset_params=None):
-#     """Build comprehensive prompt with KG + vector context and enhanced formatting instructions"""
-
-#     # Determine answer depth from preset
-#     if preset_params:
-#         mode = preset_params.get("_mode", "balanced")
-#     else:
-#         mode = "balanced"
-
-#     # Mode-specific instructions with DETAILED formatting requirements
-#     if mode == "concise":
-#         default_instruction = (
-#             "Provide a FOCUSED answer using ONLY the KG and passages below.\n\n"
-
-#             "CRITICAL FORMATTING REQUIREMENTS:\n"
-#             "1. ATTRIBUTION: Include 1-2 citations [1], [2] for key claims\n"
-#             "2. STRUCTURE: Use 3-5 bullet points (•) for key information\n"
-#             "3. MARKERS: Add 'Key Point:' and 'Note:' markers\n"
-#             "4. CLARITY: Maximum 20 words per sentence\n"
-#             "5. LENGTH: Keep total answer under 250 words\n\n"
-
-#             "ANSWER TEMPLATE:\n"
-#             "**Direct Answer:** [1-2 sentence summary] [1]\n\n"
-#             "**Key Points:**\n"
-#             "• Point 1: [brief detail] [2]\n"
-#             "• Point 2: [brief detail]\n"
-#             "• Point 3: [brief detail] [1]\n\n"
-#             "**Note:** [Any important clarification]\n\n"
-
-#             "Every factual statement MUST have a citation."
-#         )
-
-#     elif mode == "deep":
-#         default_instruction = (
-#             "Provide a COMPREHENSIVE and DETAILED answer using ALL information in the KG context and passages below.\n\n"
-
-#             "CRITICAL FORMATTING REQUIREMENTS:\n"
-#             "1. ATTRIBUTION:\n"
-#             "   - Include 3-5 citations minimum using [1], [2], [3], [4], [5]\n"
-#             "   - Also cite KG entities as [KG: entity_name] when using graph information\n"
-#             "   - Cite EVERY factual statement, rule, number, or condition\n"
-#             "2. STRUCTURE:\n"
-#             "   - Use extensive bullet points (•) for all lists and findings\n"
-#             "   - Use sub-bullets (  -) for hierarchical details\n"
-#             "   - Create 5-8 numbered sections for complex topics\n"
-#             "   - Each section should have 3-6 bullet points\n"
-#             "3. MARKERS:\n"
-#             "   - Use multiple markers: 'Key Point:', 'Note:', 'Important:', 'Example:', 'Analysis:', 'Evidence:'\n"
-#             "   - Add at least 5-8 markers throughout the answer\n"
-#             "4. CLARITY:\n"
-#             "   - Maximum 25 words per sentence\n"
-#             "   - One concept per sentence\n"
-#             "   - Short paragraphs (2-3 sentences max between bullets)\n"
-#             "5. COMPLETENESS:\n"
-#             "   - Answer should be 1000-2500 words for complex topics\n"
-#             "   - Cover ALL details from sources\n"
-#             "   - Include ALL rules, conditions, and exceptions mentioned\n\n"
-
-#             "EXAMPLE STRUCTURE FOR EXCELLENT ANSWERS:\n"
-#             "**Overview:**\n"
-#             "[2-3 sentence definition/introduction] [1]\n\n"
-
-#             "**1. Main Topic Area**\n"
-#             "Key Point: [Introduction to this section] [2]\n"
-#             "• Finding 1: [detailed explanation with specifics] [3]\n"
-#             "  - Sub-detail A\n"
-#             "  - Sub-detail B\n"
-#             "• Finding 2: [detailed explanation] [KG: entity] [4]\n"
-#             "• Finding 3: [detailed explanation] [5]\n\n"
-
-#             "**2. Second Topic Area**\n"
-#             "Important: [Key insight for this section]\n"
-#             "• Point A: [comprehensive detail] [1]\n"
-#             "• Point B: [comprehensive detail] [6]\n"
-#             "• Point C: [comprehensive detail] [KG: entity]\n\n"
-
-#             "**3. Detailed Rules/Process**\n"
-#             "Analysis: [Context for rules below]\n"
-#             "• Rule 1: [complete specification] [7]\n"
-#             "  - Condition A\n"
-#             "  - Condition B\n"
-#             "• Rule 2: [complete specification] [2]\n"
-#             "• Rule 3: [complete specification] [8]\n\n"
-
-#             "**4. Variations/Edge Cases**\n"
-#             "Note: [Introduction to variations]\n"
-#             "• Variation 1: [detailed explanation] [9]\n"
-#             "• Variation 2: [detailed explanation] [3]\n\n"
-
-#             "**5. Additional Considerations**\n"
-#             "• Consideration 1 [10]\n"
-#             "• Consideration 2 [KG: entity]\n\n"
-
-#             "**Key Insights:**\n"
-#             "• Critical takeaway 1\n"
-#             "• Critical takeaway 2\n\n"
-
-#             "YOUR TASK:\n"
-#             "✓ Follow this pattern: Clear sections with extensive bullets\n"
-#             "✓ Cite EVERY factual claim\n"
-#             "✓ Include ALL details, don't summarize if sources are detailed\n"
-#             "✓ Use confident language when sources are clear\n"
-#             "✓ Add 5-8 markers throughout\n"
-#             "✓ Aim for completeness: if sources have 10 points, include all 10\n\n"
-
-#             "AVOID:\n"
-#             "✗ Vague summaries when sources are specific\n"
-#             "✗ Omitting details present in sources\n"
-#             "✗ Hedging language ('might', 'possibly') unless source uses it\n"
-#         )
-
-#     else:  # balanced
-#         default_instruction = (
-#             "Provide a CLEAR and WELL-STRUCTURED answer using ONLY the KG and passages below.\n\n"
-
-#             "CRITICAL FORMATTING REQUIREMENTS:\n"
-#             "1. ATTRIBUTION:\n"
-#             "   - Include 2-3 citations using [1], [2], [3] format\n"
-#             "   - Also cite KG entities as [KG: entity_name]\n"
-#             "   - Every key fact needs a citation\n"
-#             "2. STRUCTURE:\n"
-#             "   - Use bullet points (•) extensively for lists and findings\n"
-#             "   - Use sub-bullets (  -) where appropriate\n"
-#             "   - Create 3-5 clear sections or logical groups\n"
-#             "3. MARKERS:\n"
-#             "   - Add 3-5 markers: 'Key Point:', 'Note:', 'Important:', 'Example:'\n"
-#             "   - Use markers to highlight critical information\n"
-#             "4. CLARITY:\n"
-#             "   - Maximum 25 words per sentence\n"
-#             "   - One main idea per sentence\n"
-#             "   - Short paragraphs between bullet sections\n"
-#             "5. LENGTH: 400-800 words typically\n\n"
-
-#             "ANSWER TEMPLATE:\n"
-#             "**Overview:** [2-3 sentence introduction] [1]\n\n"
-
-#             "**Main Findings:**\n"
-#             "Key Point: [Context for this section]\n"
-#             "• Finding 1: [explanation with details] [2]\n"
-#             "• Finding 2: [explanation with details] [KG: entity]\n"
-#             "• Finding 3: [explanation with details] [3]\n\n"
-
-#             "**Additional Details:**\n"
-#             "• Detail 1: [information] [1]\n"
-#             "• Detail 2: [information] [4]\n"
-#             "  - Sub-point A\n"
-#             "  - Sub-point B\n\n"
-
-#             "**Important:** [Key notes or considerations]\n\n"
-
-#             "Every factual statement MUST have a citation."
-#         )
-
-#     instructions = instruction or default_instruction
-
-#     # Build prompt sections
-#     lines = [
-#         "You are a precise wealth-management assistant.\n",
-#         "## Instructions\n",
-#         instructions + "\n",
-#         "",
-#         "## FORMATTING REMINDER\n",
-#         "Before you write, remember:\n",
-#         "✓ Use [1], [2], [3] for passage citations\n",
-#         "✓ Use [KG: entity_name] for knowledge graph references\n",
-#         "✓ Use bullets (•) extensively throughout\n",
-#         "✓ Add markers (Key Point:, Note:, Important:, etc.)\n",
-#         "✓ Keep sentences under 25 words\n",
-#         "✓ Cite every factual statement\n",
-#         "\n",
-#         "## Question\n",
-#         question + "\n",
-#         ""
-#     ]
-
-#     # Add KG context
-#     if compact_nodes:
-#         lines.append("## KG Nodes")
-#         for n in compact_nodes[:50]:
-#             lines.append(f"- {n.get('name')} ({n.get('type')}) [id={n.get('id')}]")
-#         lines.append("")
-
-#     if compact_edges:
-#         lines.append("## KG Edges")
-#         for e in compact_edges[:80]:
-#             lines.append(f"- {e.get('source')} --({e.get('type')})-> {e.get('target')}")
-#         lines.append("")
-
-#     if node_context:
-#         lines.append("## KG Context")
-#         for nid, ctx in list(node_context.items())[:30]:
-#             lines.append(f"- {nid}:")
-#             lines.append(indent(ctx[:1500]))
-#         lines.append("")
-
-#     # Add retrieved passages
-#     lines.append("## Retrieved Passages")
-#     for i, c in enumerate(chunks, 1):
-#         src = c.get("filename") or c.get("file_id")
-#         txt = (c.get("text") or "")[:1800]
-#         lines.append(f"[{i}] ({src})")
-#         lines.append(indent(txt))
-#         lines.append("")
-
-#     return "\n".join(lines)
-
-# def enhance_answer_formatting(answer_text, has_citations=True, mode="balanced"):
-#     """
-#     Post-process LLM output to ensure compliance with formatting requirements.
-#     Adds missing elements if not present.
-
-#     Args:
-#         answer_text: The raw answer from LLM
-#         has_citations: Whether passages were provided (affects citation addition)
-#         mode: Answer mode (concise/balanced/deep) - affects expectations
-
-#     Returns:
-#         Enhanced answer text with better formatting
-#     """
-#     import re
-
-#     if not answer_text or answer_text.startswith("_Error"):
-#         return answer_text
-
-#     # Define expected minimums based on mode
-#     if mode == "concise":
-#         min_markers = 1
-#         min_bullets = 3
-#         min_citations = 1
-#     elif mode == "deep":
-#         min_markers = 5
-#         min_bullets = 8
-#         min_citations = 3
-#     else:  # balanced
-#         min_markers = 3
-#         min_bullets = 5
-#         min_citations = 2
-
-#     # Count existing formatting elements
-#     markers = ['Key Point:', 'Note:', 'Important:', 'Example:', 'Key Insight:',
-#                'Analysis:', 'Evidence:', 'Overview:', 'Summary:']
-#     marker_count = sum(1 for marker in markers if marker in answer_text)
-
-#     bullet_count = answer_text.count('•') + answer_text.count('\n- ') + answer_text.count('\n* ')
-
-#     citation_count = len(re.findall(r'\[(?:\d+|KG:[^\]]+)\]', answer_text))
-
-#     # Enhancement 1: Add markers if missing
-#     if marker_count < min_markers:
-#         paragraphs = answer_text.split('\n\n')
-
-#         # Add "Key Point:" to first substantial paragraph if not present
-#         if len(paragraphs) > 0 and not any(marker in paragraphs[0] for marker in markers):
-#             if len(paragraphs[0]) > 50 and not paragraphs[0].startswith('#'):
-#                 paragraphs[0] = "**Key Point:** " + paragraphs[0]
-#                 marker_count += 1
-
-#         # Add "Note:" or "Important:" to last paragraph if still need more markers
-#         if len(paragraphs) > 1 and marker_count < min_markers:
-#             last_para = paragraphs[-1]
-#             if len(last_para) > 30 and not any(marker in last_para for marker in markers):
-#                 if not last_para.startswith('#') and not last_para.startswith('**'):
-#                     paragraphs[-1] = "**Note:** " + last_para
-#                     marker_count += 1
-
-#         # Add "Important:" to middle section if still need markers
-#         if len(paragraphs) > 2 and marker_count < min_markers:
-#             mid_idx = len(paragraphs) // 2
-#             if not any(marker in paragraphs[mid_idx] for marker in markers):
-#                 if len(paragraphs[mid_idx]) > 40:
-#                     paragraphs[mid_idx] = "**Important:** " + paragraphs[mid_idx]
-
-#         answer_text = '\n\n'.join(paragraphs)
-
-#     # Enhancement 2: Add citations if missing and passages were provided
-#     if has_citations and citation_count < min_citations:
-#         sentences = re.split(r'(?<=[.!?])\s+', answer_text)
-#         added_citations = 0
-
-#         for i, sent in enumerate(sentences):
-#             # Skip if already has citation, is too short, or is a header
-#             if '[' in sent or len(sent) < 40 or sent.startswith('#') or sent.startswith('**'):
-#                 continue
-
-#             # Add citation to sentences that look like factual claims
-#             if any(keyword in sent.lower() for keyword in ['is', 'are', 'must', 'should', 'will', 'can', 'include', 'require']):
-#                 # Add citation before the period
-#                 sentences[i] = re.sub(r'([.!?])$', r' [1]\1', sent)
-#                 added_citations += 1
-
-#                 if citation_count + added_citations >= min_citations:
-#                     break
-
-#         if added_citations > 0:
-#             answer_text = ' '.join(sentences)
-
-#     # Enhancement 3: Convert lists to bullets if needed
-#     if bullet_count < min_bullets:
-#         # Look for numbered lists and convert some to bullets
-#         lines = answer_text.split('\n')
-#         for i, line in enumerate(lines):
-#             # Convert "1. " or "2. " etc to bullets
-#             if re.match(r'^\s*\d+\.\s+', line):
-#                 lines[i] = re.sub(r'^(\s*)\d+\.\s+', r'\1• ', line)
-#                 bullet_count += 1
-
-#                 if bullet_count >= min_bullets:
-#                     break
-
-#         answer_text = '\n'.join(lines)
-
-#     # Enhancement 4: Ensure proper section headers
-#     # Add bold to headers that look like sections but aren't formatted
-#     answer_text = re.sub(
-#         r'^([A-Z][^.!?:\n]{3,50}):(?!\*)',  # Find "Title:" not followed by *
-#         r'**\1:**',  # Make it **Title:**
-#         answer_text,
-#         flags=re.MULTILINE
-#     )
-
-#     return answer_text
-
-
-def build_grounded_messages(question, compact_nodes, compact_edges, node_context, chunks, mode=None, preset_params=None, custom_system_prompt=None, structured_context=None):
-    """
-    Build system and user messages for hybrid answer generation.
-    Returns: (system_msg, user_msg) tuple
-
-    This replaces the old build_grounded_prompt that returned a single string.
-    
-    Args:
-        question: The question string
-        compact_nodes: KG nodes
-        compact_edges: KG edges
-        node_context: Node context dict
-        chunks: Retrieved chunks
-        mode: Mode (concise/balanced/deep)
-        preset_params: Preset parameters
-        custom_system_prompt: Optional custom system prompt (overrides default)
-        structured_context: Optional dict with structured context (requirement, bank_profile, market_subrequirements, etc.)
-    """
-
-    # Determine mode
-    if mode is None and preset_params:
-        mode = preset_params.get("_mode", "balanced")
-    elif mode is None:
-        mode = "balanced"
-
-    # Determine passage budgets for the mode
-    default_budget = ANSWER_PRESETS.get(mode, {})
-    chunk_char_limit = 1800
-    chunk_sentence_limit = 12
-
-    if default_budget:
-        chunk_char_limit = default_budget.get("chunk_char_limit", chunk_char_limit)
-        chunk_sentence_limit = default_budget.get("chunk_sentence_limit", chunk_sentence_limit)
-
-    if preset_params:
-        chunk_char_limit = preset_params.get("chunk_char_limit", chunk_char_limit)
-        chunk_sentence_limit = preset_params.get("chunk_sentence_limit", chunk_sentence_limit)
-
-    # ============= SYSTEM MESSAGE (Instructions) =============
-    
-    # Use custom system prompt if provided
-    if custom_system_prompt:
-        system_msg = custom_system_prompt
-    elif mode == "concise":
-        system_msg = (
-            "You are a precise wealth-management assistant. "
-            "Answer using ONLY the provided KG context and passages.\n\n"
-
-            "CRITICAL FORMATTING REQUIREMENTS:\n"
-            "1. ATTRIBUTION: Include citations [1], [2] for key claims\n"
-            "2. STRUCTURE: Use 3-5 bullet points (•) for key information\n"
-            "3. MARKERS: Use 'Important:' sparingly and professionally\n"
-            "4. CLARITY: Maximum 20 words per sentence\n"
-            "5. LENGTH: Keep total answer under 250 words\n\n"
-
-            "ANSWER TEMPLATE:\n"
-            "**Answer:** [2-5 sentence summary] [1]\n\n"
-            "**Key Information:**\n"
-            "• [brief detail] [2]\n"
-            "• [brief detail]\n"
-            "• [brief detail] [1]\n\n"
-            "**Important:** [Any important clarification]\n\n"
-
-            "Every factual statement should have a citation. "
-        )
-
-    elif mode == "deep":
-        system_msg = (
-            "You are a precise wealth-management assistant. "
-            "Answer using ONLY the provided KG context and passages.\n\n"
-
-            "CRITICAL FORMATTING REQUIREMENTS:\n"
-            "1. ATTRIBUTION:\n"
-            "   - Include citations using [1], [2], [3], [4], [5]\n"
-            "   - Also cite KG entities as [KG: entity_name]\n"
-            "   - Cite EVERY factual statement, rule, number, or condition\n"
-            "2. STRUCTURE:\n"
-            "   - Use extensive bullet points (•) for all lists and findings\n"
-            "   - Use sub-bullets (  -) for hierarchical details\n"
-            "   - Create 5-8 numbered sections for complex topics\n"
-            "   - Each section should have 3-6 bullet points\n"
-            "3. MARKERS:\n"
-            "   - Use professional markers: 'Important:', 'Note:', 'Example:', 'Analysis:', 'Evidence:'\n"
-            "   - Add 3-5 markers throughout the answer for clarity\n"
-            "4. CLARITY:\n"
-            "   - Maximum 25 words per sentence\n"
-            "   - One concept per sentence\n"
-            "   - Short paragraphs (2-3 sentences max between bullets)\n"
-            "5. COMPLETENESS:\n"
-            "   - Answer should be 1000-2500 words for complex topics\n"
-            "   - Cover ALL details from sources\n"
-            "   - Include ALL rules, conditions, and exceptions mentioned\n\n"
-
-            "ANSWER STRUCTURE:\n"
-            "**Overview:** [3-5 sentence definition] [1]\n\n"
-            "**1. Main Topic**\n"
-            "Key Point: [Introduction] [2]\n"
-            "• Finding 1: [detailed explanation] [3]\n"
-            "  - Sub-detail A\n"
-            "  - Sub-detail B\n"
-            "• Finding 2: [detailed explanation] [KG: entity] [4]\n\n"
-            "**2. Second Topic**\n"
-            "Important: [Key insight]\n"
-            "• Point A: [comprehensive detail] [1]\n"
-            "• Point B: [comprehensive detail] [5]\n\n"
-            "[Continue with 3-6 more sections following this pattern]\n\n"
-            "**Key Insights:**\n"
-            "• Critical takeaway 1\n"
-            "• Critical takeaway 2\n\n"
-
-            "Follow this pattern. Cite EVERY factual claim. "
-            "Include ALL details from sources. "
-        )
-
-    else:  # balanced
-        system_msg = (
-            "You are a precise wealth-management assistant. "
-            "Answer using ONLY the provided KG context and passages.\n\n"
-
-            "CRITICAL FORMATTING REQUIREMENTS:\n"
-            "1. ATTRIBUTION:\n"
-            "   - Include citations using [1], [2], [3] format\n"
-            "   - Also cite KG entities as [KG: entity_name]\n"
-            "   - Every key fact needs a citation\n"
-            "2. STRUCTURE:\n"
-            "   - Use bullet points (•) extensively for lists and findings\n"
-            "   - Use sub-bullets (  -) where appropriate\n"
-            "   - Create 3-5 clear sections or logical groups\n"
-            "3. MARKERS:\n"
-            "   - Add 3-5 markers: 'Key Point:', 'Note:', 'Important:', 'Example:'\n"
-            "   - Use markers to highlight critical information\n"
-            "4. CLARITY:\n"
-            "   - Maximum 25 words per sentence\n"
-            "   - One main idea per sentence\n"
-            "   - Short paragraphs between bullet sections\n"
-            "5. LENGTH: 400-800 words typically\n\n"
-
-            "ANSWER TEMPLATE:\n"
-            "**Overview:** [2-3 sentence introduction] [1]\n\n"
-
-            "**Key Information:**\n"
-            "• [explanation with details] [2]\n"
-            "• [explanation with details] [KG: entity]\n"
-            "• [explanation with details] [3]\n\n"
-
-            "**Important Details:**\n"
-            "• [information] [1]\n"
-            "• [information] [4]\n"
-            "  - Sub-point A\n"
-            "  - Sub-point B\n\n"
-
-            "**Important:** [Key notes or considerations]\n\n"
-
-            "Every factual statement MUST have a citation. "
-        )
-
-    # ============= USER MESSAGE (Context + Question) =============
-
-    user_parts = []
-
-    # Add structured context if provided (for custom workflows)
-    if structured_context:
-        import json
-        requirement = structured_context.get("requirement")
-        bank_profile = structured_context.get("bank_profile")
-        market_subrequirements = structured_context.get("market_subrequirements")
-        
-        if requirement:
-            user_parts.append("## Requirement")
-            user_parts.append(str(requirement))
-            user_parts.append("")
-        
-        if bank_profile:
-            user_parts.append("## Bank Profile")
-            if isinstance(bank_profile, dict):
-                user_parts.append(json.dumps(bank_profile, indent=2, ensure_ascii=False))
-            else:
-                user_parts.append(str(bank_profile))
-            user_parts.append("")
-        
-        if market_subrequirements:
-            user_parts.append("## Market Subrequirements")
-            if isinstance(market_subrequirements, list):
-                for subreq in market_subrequirements:
-                    if isinstance(subreq, dict):
-                        user_parts.append(f"- **{subreq.get('id', 'N/A')}**: {subreq.get('title', '')}")
-                        user_parts.append(f"  Description: {subreq.get('description', '')}")
-                        user_parts.append(f"  Priority: {subreq.get('priority', 'N/A')}")
-                    else:
-                        user_parts.append(f"- {subreq}")
-            else:
-                user_parts.append(str(market_subrequirements))
-            user_parts.append("")
-    
-    # Add formatting reminder (skip if custom system prompt is used)
-    if not custom_system_prompt:
-        user_parts.append("## FORMATTING REMINDER")
-        user_parts.append("Before you write, remember:")
-        user_parts.append("✓ Use [1], [2], [3] for passage citations")
-        user_parts.append("✓ Use [KG: entity_name] for knowledge graph references")
-        user_parts.append("✓ Use bullets (•) extensively throughout")
-        user_parts.append("✓ Add markers (Key Point:, Note:, Important:, etc.)")
-        user_parts.append("✓ Keep sentences under 25 words")
-        user_parts.append("✓ Cite every factual statement\n")
-
-    # Add question
-    user_parts.append("## Question")
-    user_parts.append(question)
-    user_parts.append("")
-
-    # Add KG context
-    if compact_nodes:
-        user_parts.append("## KG Nodes")
-        for n in compact_nodes[:50]:
-            user_parts.append(f"- {n.get('name')} ({n.get('type')}) [id={n.get('id')}]")
-        user_parts.append("")
-
-    if compact_edges:
-        user_parts.append("## KG Edges")
-        for e in compact_edges[:80]:
-            user_parts.append(f"- {e.get('source')} --({e.get('type')})-> {e.get('target')}")
-        user_parts.append("")
-
-    if node_context:
-        user_parts.append("## KG Context")
-        for nid, ctx in list(node_context.items())[:30]:
-            user_parts.append(f"- {nid}:")
-            user_parts.append(indent(ctx[:1500]))
-        user_parts.append("")
-
-    # Add retrieved passages
-    user_parts.append("## Retrieved Passages")
-    for i, c in enumerate(chunks, 1):
-        src = c.get("filename") or c.get("file_id")
-        raw_text = c.get("text") or ""
-        txt = _smart_trim_passage(raw_text, question, chunk_char_limit, chunk_sentence_limit)
-        user_parts.append(f"[{i}] ({src})")
-        user_parts.append(indent(txt))
-        user_parts.append("")
-
-    user_msg = "\n".join(user_parts)
-
-    return system_msg, user_msg
-
 def kg_anchors(resolved_entities, supporting_edges, by_id):
     """Extract entity names and provenance from KG results"""
     ent_names = []
@@ -2146,392 +1705,114 @@ def kg_anchors(resolved_entities, supporting_edges, by_id):
                 provenance.append(prov)
     return ent_names, provenance
 
-def expand_queries_from_kg(question, entity_names, supporting_edges, k_max=6):
-    """Create focused retrieval queries from KG context"""
-    queries = []
 
-    # Always start with exact question
-    if question:
-        queries.append(question)
-
-    # Extract key terms from the question itself
-    question_lower = question.lower()
-
-    # Question-specific keyword extraction
-    key_phrases = []
-
-    if "crr" in question_lower or "prr" in question_lower:
-        key_phrases = [
-            "customer risk rating product risk rating",
-            "CRR PRR validation rules",
-            "risk profile comparison order placement"
-        ]
-    elif "otp" in question_lower:
-        key_phrases = [
-            "OTP mobile number registration",
-            "two factor authentication folio",
-            "circular SEBI mobile OTP"
-        ]
-    elif "transaction slip" in question_lower:
-        key_phrases = [
-            "transaction slip upload mandatory",
-            "physical mode document upload",
-            "slip requirement transaction type"
-        ]
-    elif "inflow" in question_lower and "outflow" in question_lower:
-        key_phrases = [
-            "inflow outflow simultaneous placement",
-            "purchase redemption together submit",
-            "separate transaction clubbing restriction"
-        ]
-    elif "signature" in question_lower and "nomination" in question_lower:
-        key_phrases = [
-            "signature requirement joint account",
-            "nomination form signing authority",
-            "transaction slip authorization holder"
-        ]
-    elif "nominee" in question_lower:
-        key_phrases = [
-            "nominee mandatory fields capture",
-            "nomination data requirements",
-            "nominee information folio creation"
-        ]
-    elif "order expiry" in question_lower:
-        key_phrases = [
-            "order expiry validity period",
-            "expiration implementation variation",
-            "order timeout cancellation"
-        ]
-    elif "rm portal" in question_lower or "client portal" in question_lower:
-        key_phrases = [
-            "RM portal client portal difference",
-            "order process flow channel variation",
-            "portal specific workflow"
-        ]
-    elif "order status" in question_lower:
-        key_phrases = [
-            "order status lifecycle journey",
-            "order stages implementation",
-            "status transitions workflow"
-        ]
-    elif "model order" in question_lower:
-        key_phrases = [
-            "model order portfolio journey",
-            "model prerequisites implementation",
-            "portfolio based order"
-        ]
-    elif "folio" in question_lower:
-        key_phrases = [
-            "folio number investor multiple",
-            "single investor multiple folios",
-            "folio AMC relationship"
-        ]
-    else:
-        # Generic fallback
-        # Extract important nouns from question
-        words = question_lower.split()
-        key_words = [w for w in words if len(w) > 4 and w not in ['what', 'when', 'where', 'which', 'would', 'should', 'could']]
-        if key_words:
-            key_phrases = [' '.join(key_words[:4])]
-
-    # Add key phrase queries
-    for phrase in key_phrases[:3]:
-        if phrase and phrase not in queries:
-            queries.append(phrase)
-
-    # IMPORTANT: Don't append entity names that create malformed queries
-    # Only add entity if it's clearly relevant and short
-    for name in entity_names[:1]:
-        if name and len(name.split()) <= 3 and len(queries) < k_max:
-            # Only add if entity is actually mentioned in question or is clearly relevant
-            if name.lower() in question_lower or any(word in name.lower() for word in ['order', 'folio', 'nominee', 'risk']):
-                queries.append(f"{name} details")
-
-    # Deduplicate
-    seen = set()
-    result = []
-    for q in queries:
-        q_clean = q.strip().lower()
-        if q and q_clean not in seen and len(q) >= 10:
-            seen.add(q_clean)
-            result.append(q)
-        if len(result) >= k_max:
-            break
-
-    return result[:k_max]
-
-def build_citation_map(chunks):
-    """Build citation indices and source maps"""
-    file_to_idxs = {}
-    idx_to_src = {}
-    for i, c in enumerate(chunks, 1):
-        fn = c.get("filename") or c.get("file_id") or f"file_{i}"
-        file_to_idxs.setdefault(fn, []).append(i)
-        idx_to_src[i] = {"filename": c.get("filename"), "file_id": c.get("file_id")}
-    return file_to_idxs, idx_to_src
-
-"""## Complete Hybrid Pipeline"""
-
-# def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks=10, k_each=3, lambda_div=0.4, preset_params=None):
-#     if preset_params:
-#         max_chunks = preset_params.get("max_chunks", max_chunks)
-#         k_each = preset_params.get("k_each", k_each)
-#         lambda_div = preset_params.get("lambda_div", lambda_div)
-#         model = preset_params.get("model", model)
-
-#     ents, prov = kg_anchors(kg_result.get("resolved_entities"), kg_result.get("supporting_edges"), by_id)
-#     # subqs = expand_queries_from_kg(q, ents, kg_result.get("supporting_edges"))
-
-#     # print(f"  → Generated {len(subqs)} sub-queries")
-
-#     subqs = expand_queries_from_kg(q, ents, kg_result.get("supporting_edges"))
-
-#     # Add reformulated versions for better coverage
-#     reformulations = []
-
-#     # Extract key terms from question
-#     q_lower = q.lower()
-
-#     # Add imperative reformulations
-#     if q.startswith("What"):
-#         reformulations.append(q.replace("What is", "Explain", 1))
-#         reformulations.append(q.replace("What are", "List all", 1))
-#         reformulations.append(q.replace("What", "Describe", 1))
-#     elif q.startswith("Which"):
-#         reformulations.append(q.replace("Which", "What are all the", 1))
-#     elif q.startswith("Can"):
-#         reformulations.append(q.replace("Can I", "Is it possible to", 1))
-#         reformulations.append(q.replace("Can", "Rules for", 1))
-#     elif q.startswith("Whose"):
-#         reformulations.append(q.replace("Whose", "Which person's", 1))
-#         reformulations.append(q.replace("Whose", "Who must provide", 1))
-
-#     # Add context-enriched versions
-#     reformulations.append(f"{q} requirements rules conditions")
-#     reformulations.append(f"{q} process workflow steps")
-
-#     # Combine unique queries
-#     all_queries = subqs[:]
-#     for ref in reformulations:
-#         if ref and ref not in all_queries and len(all_queries) < 10:
-#             all_queries.append(ref)
-
-#     subqs = all_queries[:10]  # Cap at 10 queries
-
-#     print(f"  → Generated {len(subqs)} sub-queries")
-
-#     for i, sq in enumerate(subqs, 1):
-#         print(f"     {i}. {sq[:80]}...")
-
-#     pool = retrieve_parallel(client, vs_id, subqs, k_each=k_each)
-#     print(f"  → Retrieved {len(pool)} raw chunks from vector store")
-
-#     if not pool:
-#         print(f"  ⚠️  WARNING: Vector store returned 0 results!")
-#         print(f"     Check: Is VECTOR_STORE_ID correct? Are there documents in the store?")
-
-#     # curated = mmr_merge(pool, k_final=max_chunks, lambda_div=lambda_div)
-#     # print(f"  → After MMR: {len(curated)} curated chunks")
-
-#     # # Re-rank and reassign to same variable
-#     # curated = rerank_chunks_by_relevance(client, q, curated, top_k=max_chunks)
-#     # print(f"  → After re-ranking: {len(curated)} high-relevance chunks")
-
-#     curated = mmr_merge(pool, k_final=max_chunks*5, lambda_div=lambda_div)
-#     print(f"  → After MMR: {len(curated)} curated chunks")
-
-#     # Add re-ranking with adaptive threshold
-#     curated = rerank_chunks_by_relevance(
-#         client, q, curated,
-#         top_k=max_chunks,
-#         min_chunks=max(6, max_chunks//2)  # Ensure minimum chunks
-#     )
-
-#     # Expand context to ensure completeness
-#     curated = expand_chunk_context(curated)
-
-#     print(f"  → After re-ranking: {len(curated)} high-relevance chunks")
-
-#     # Debug: Show what chunks we're actually using
-#     print(f"  → Chunk relevance scores:")
-#     for i, chunk in enumerate(curated[:5], 1):
-#         score = chunk.get('relevance_score', 0)
-#         filename = chunk.get('filename', 'unknown')[:40]
-#         text_preview = chunk.get('text', '')[:80].replace('\n', ' ')
-#         print(f"     [{i}] Score: {score:.3f} | {filename} | {text_preview}...")
-
-#     node_ctx = kg_result.get("grounding", {}).get("NodeContext", {})
-#     compact_nodes = kg_result.get("grounding", {}).get("Nodes", [])
-#     compact_edges = kg_result.get("grounding", {}).get("Edges", [])
-
-#     prompt = build_grounded_prompt(q, compact_nodes, compact_edges, node_ctx, curated, preset_params=preset_params)
-#     resp = client.responses.create(model=model, input=prompt)
-#     answer = resp.output_text
-
-
-#     # Verify grounding
-#     # Track verification for logging only (don't display warnings)
-#     verification = verify_answer_grounding(answer, curated, client)
-#     # Only log to console, not in answer output
-#     if verification['confidence'] < 0.25:  # Only if EXTREMELY low
-#         print(f"  → Grounding confidence: {verification['confidence']:.2f}")
-
-#     file_to_idxs, idx_to_src = build_citation_map(curated)
-
-
-#     return {
-#         "answer": answer,
-#         "verification": verification,  # Add to output
-#         "subqueries": subqs,
-#         "curated_chunks": curated,
-#         "citation_index_to_source": idx_to_src,
-#         "files_to_citation_indices": file_to_idxs,
-#         "provenance_from_kg": prov,
-#         "model_used": model,
-#         "prompt_chars": len(prompt)
-#     }
-
-
-def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks=10, k_each=3, lambda_div=0.4, preset_params=None):
-    """Complete hybrid pipeline with enhanced formatting"""
+def answer_with_kg_and_vector(q, G, by_id, name_index, client, kg_vector_store_id, doc_vector_store_id, preset_params=None):
+    """
+    New workflow: Complete KG + Vector pipeline using file_search tool.
+    
+    This replaces the old hybrid_answer function.
+    
+    Args:
+        q: Question
+        G: NetworkX graph
+        by_id: Node lookup dict
+        name_index: Name index
+        client: OpenAI client
+        kg_vector_store_id: Vector store ID for KG nodes
+        doc_vector_store_id: Vector store ID for documents
+        preset_params: Preset parameters
+    
+    Returns:
+        Dict with answer, citations, etc.
+    """
     if preset_params:
-        max_chunks = preset_params.get("max_chunks", max_chunks)
-        k_each = preset_params.get("k_each", k_each)
-        lambda_div = preset_params.get("lambda_div", lambda_div)
-        model = preset_params.get("model", model)
+        model = preset_params.get("model", "gpt-4o")
         mode = preset_params.get("_mode", "balanced")
-        max_subqueries = preset_params.get("max_subqueries", 10)
-        retrieval_workers = preset_params.get("retrieval_workers", 6)
-        min_chunks = preset_params.get("min_chunks", max(6, max_chunks // 2))
+        hops = preset_params.get("hops", 1)
+        max_expanded = preset_params.get("max_expanded", 60)
     else:
+        model = "gpt-4o"
         mode = "balanced"
-        max_subqueries = 10
-        retrieval_workers = 6
-        min_chunks = max(6, max_chunks // 2)
-
-    ents, prov = kg_anchors(kg_result.get("resolved_entities"), kg_result.get("supporting_edges"), by_id)
-    subqs = expand_queries_from_kg(q, ents, kg_result.get("supporting_edges"), k_max=max_subqueries)
-
-    # Add reformulated versions for better coverage
-    reformulations = []
-    q_lower = q.lower()
-
-    if q.startswith("What"):
-        reformulations.append(q.replace("What is", "Explain", 1))
-        reformulations.append(q.replace("What are", "List all", 1))
-        reformulations.append(q.replace("What", "Describe", 1))
-    elif q.startswith("Which"):
-        reformulations.append(q.replace("Which", "What are all the", 1))
-    elif q.startswith("Can"):
-        reformulations.append(q.replace("Can I", "Is it possible to", 1))
-        reformulations.append(q.replace("Can", "Rules for", 1))
-    elif q.startswith("Whose"):
-        reformulations.append(q.replace("Whose", "Which person's", 1))
-        reformulations.append(q.replace("Whose", "Who must provide", 1))
-
-    reformulations.append(f"{q} requirements rules conditions")
-    reformulations.append(f"{q} process workflow steps")
-
-    seen_queries = set()
-    all_queries = []
-
-    for candidate in [q] + (subqs or []):
-        if not candidate:
-            continue
-        key = _norm(candidate)
-        if key in seen_queries:
-            continue
-        seen_queries.add(key)
-        all_queries.append(candidate)
-        if len(all_queries) >= max_subqueries:
-            break
-
-    if len(all_queries) < max_subqueries:
-        for ref in reformulations:
-            if not ref:
-                continue
-            key = _norm(ref)
-            if key in seen_queries:
-                continue
-            seen_queries.add(key)
-            all_queries.append(ref)
-            if len(all_queries) >= max_subqueries:
-                break
-
-    subqs = all_queries
-
-    print(f"  → Generated {len(subqs)} sub-queries")
-    for i, sq in enumerate(subqs, 1):
-        print(f"     {i}. {sq[:80]}...")
-
-    pool = retrieve_parallel(client, vs_id, subqs, k_each=k_each, max_workers=retrieval_workers)
-    print(f"  → Retrieved {len(pool)} raw chunks from vector store")
-
-    if not pool:
-        print(f"  ⚠️  WARNING: Vector store returned 0 results!")
-
-    curated = mmr_merge(pool, k_final=max_chunks*5, lambda_div=lambda_div)
-    print(f"  → After MMR: {len(curated)} curated chunks")
-
-    curated = rerank_chunks_by_relevance(
-        client, q, curated,
-        top_k=max_chunks,
-        min_chunks=min_chunks
-    )
-
-    curated = expand_chunk_context(curated)
-    print(f"  → After re-ranking: {len(curated)} high-relevance chunks")
-
-    print(f"  → Chunk relevance scores:")
-    for i, chunk in enumerate(curated[:5], 1):
-        score = chunk.get('relevance_score', 0)
-        filename = chunk.get('filename', 'unknown')[:40]
-        text_preview = chunk.get('text', '')[:80].replace('\n', ' ')
-        print(f"     [{i}] Score: {score:.3f} | {filename} | {text_preview}...")
-
-    node_ctx = kg_result.get("grounding", {}).get("NodeContext", {})
-    compact_nodes = kg_result.get("grounding", {}).get("Nodes", [])
-    compact_edges = kg_result.get("grounding", {}).get("Edges", [])
-
-    # BUILD SYSTEM AND USER MESSAGES (NEW APPROACH)
-    system_msg, user_msg = build_grounded_messages(
-        q, compact_nodes, compact_edges, node_ctx, curated,
-        mode=mode, preset_params=preset_params
-    )
-
-    # Generate answer with proper system/user structure
-    resp = client.responses.create(
+        hops = 1
+        max_expanded = 60
+    
+    # Step 1: Get relevant nodes using file_search
+    stepback_response = get_relevant_nodes(
+        question=q,
+        kg_vector_store_id=kg_vector_store_id,
+        client=client,
         model=model,
-        input=[
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg}
-        ]
+        max_nodes=10
     )
-    answer = resp.output_text
-
-    # Apply post-processing to enhance formatting
-    # answer = enhance_answer_formatting(answer, has_citations=len(curated) > 0, mode=mode)
-    print(f"  ✓ Applied formatting enhancements for {mode} mode")
-
-    # Verify grounding (keep for logging)
-    verification = verify_answer_grounding(answer, curated, client)
-    if verification['confidence'] < 0.25:
-        print(f"  → Grounding confidence: {verification['confidence']:.2f}")
-
-    file_to_idxs, idx_to_src = build_citation_map(curated)
+    
+    # Step 2: Get relevant subgraph
+    kg_result = get_relevant_subgraph(
+        question=q,
+        G=G,
+        by_id=by_id,
+        kg_vector_store_id=kg_vector_store_id,
+        client=client,
+        stepback_response=stepback_response,
+        name_index=name_index,
+        hops=hops,
+        max_expanded=max_expanded
+    )
+    
+    # Step 3: Build KG-guided queries
+    expanded_queries = build_kg_guided_queries(
+        question=q,
+        kg_result=kg_result,
+        by_id=by_id,
+        max_queries=12
+    )
+    
+    # Step 4: Generate KG text
+    kg_text = generate_kg_text(kg_result, by_id)
+    
+    # Step 5: Format prompt
+    expanded_queries_str = "\n".join(f"{i+1}. {query}" for i, query in enumerate(expanded_queries))
+    message = PROMPT_SET.get(mode, PROMPT_SET["balanced"]).format(
+        expanded_queries_str=expanded_queries_str,
+        kg_text=kg_text
+    )
+    
+    # Step 6: Get response with file_search tool
+    resp = get_response(
+        message=message,
+        client=client,
+        model=model,
+        vector_ids=[doc_vector_store_id]
+    )
+    
+    # Step 7: Parse response
+    output_text = get_output_text(resp)
+    try:
+        answer_json = parse_llm_json(output_text)
+        answer = answer_json.get('answer', output_text)
+    except (json.JSONDecodeError, Exception):
+        answer = output_text
+    
+    # Build provenance from KG
+    ents, prov = kg_anchors(
+        kg_result.get("expanded_node_ids", []),
+        kg_result.get("edges", []),
+        by_id
+    )
 
     return {
         "answer": answer,
-        "verification": verification,
-        "subqueries": subqs,
-        "curated_chunks": curated,
-        "citation_index_to_source": idx_to_src,
-        "files_to_citation_indices": file_to_idxs,
+        "subqueries": expanded_queries,
+        "curated_chunks": [],  # file_search handles this internally
+        "citation_index_to_source": {},  # Citations handled by tool
+        "files_to_citation_indices": {},
         "provenance_from_kg": prov,
         "model_used": model,
         "mode": mode,
-        "prompt_chars": len(system_msg) + len(user_msg)
+        "prompt_chars": len(message),
+        "kg_result": kg_result  # Include KG result for reference
     }
+
+
 
 """## Export to Markdown"""
 
@@ -2680,14 +1961,15 @@ def show_answer_with_quiz(question, mode, hybrid_result, answer_cache, client):
             clear_retrieval_cache()
             params = get_preset(mode)
 
-            kg_result = answer_with_kg(
-                q=question, G=G, by_id=by_id, name_index=name_index,
-                llm_client=client, preset_params=params
-            )
-
-            new_hybrid_result = hybrid_answer(
-                q=question, kg_result=kg_result, by_id=by_id,
-                client=client, vs_id=VECTOR_STORE_ID, preset_params=params
+            new_hybrid_result = answer_with_kg_and_vector(
+                q=question,
+                G=G,
+                by_id=by_id,
+                name_index=name_index,
+                client=client,
+                kg_vector_store_id=VECTOR_STORE_ID,
+                doc_vector_store_id=VECTOR_STORE_ID,
+                preset_params=params
             )
 
             query_embedding = get_question_embedding(client, question)
@@ -2817,108 +2099,6 @@ def make_quiz_app_with_questions(questions):
         )
 
     return demo
-
-# def make_quiz_blocks(generate_quiz_fn, client):
-#     """
-#     generate_quiz_fn: callable(answer_text, client, num_questions=5) -> list[dict]
-#     Returns a gr.Blocks app.
-#     """
-#     with gr.Blocks(title="KG + Vector Quiz") as demo:
-#         gr.Markdown("### Quick Check Quiz\nGenerate questions from your synthesized answer and test yourself.")
-#         answer_box = gr.Textbox(
-#             label="Source Answer (from your KG + Vector pipeline)",
-#             lines=8,
-#             placeholder="Paste the synthesized answer here..."
-#         )
-
-#         gen_btn = gr.Button("Generate Quiz", variant="primary")
-#         qs_state = gr.State([])
-
-#         # Five question slots
-#         q_labels = [gr.Markdown(visible=False) for _ in range(5)]
-#         radios   = [gr.Radio([], label="", interactive=True, visible=False) for _ in range(5)]
-
-#         with gr.Row():
-#             submit_btn = gr.Button("Submit Quiz", variant="primary")
-#             reset_btn  = gr.Button("Reset")
-
-#         result_html = gr.HTML("")
-
-#         # Generate quiz handler
-#         def on_gen(answer_text):
-#             if not answer_text.strip():
-#                 return [gr.update()] * 16  # Return no changes
-
-#             qs = normalize_questions(generate_quiz_fn(answer_text, client, num_questions=5))
-
-#             if not qs:
-#                 return [gr.update()] * 16
-
-#             labels = [f"**Q{i+1}.** {q['question']}" for i, q in enumerate(qs)]
-#             options = [q["options"] for q in qs]
-
-#             # Pad to 5
-#             while len(labels) < 5:
-#                 labels.append("")
-#                 options.append([])
-
-#             # Visibility flags
-#             vis = [bool(lbl) for lbl in labels]
-
-#             return (
-#                 [qs] +                           # state
-#                 labels +                         # 5 labels
-#                 options +                        # 5 options arrays
-#                 vis + vis +                      # show labels & radios
-#                 [gr.update(value="", visible=True)]  # clear result
-#             )
-
-#         gen_btn.click(
-#             on_gen,
-#             inputs=[answer_box],
-#             outputs=[qs_state,
-#                      q_labels[0], q_labels[1], q_labels[2], q_labels[3], q_labels[4],
-#                      radios[0],   radios[1],   radios[2],   radios[3],   radios[4],
-#                      q_labels[0], q_labels[1], q_labels[2], q_labels[3], q_labels[4],
-#                      radios[0],   radios[1],   radios[2],   radios[3],   radios[4],
-#                      result_html]
-#         )
-
-#         # Submit quiz handler
-#         def on_submit(qs, a1, a2, a3, a4, a5):
-#             return _score_quiz(qs, a1, a2, a3, a4, a5)
-
-#         submit_btn.click(
-#             on_submit,
-#             inputs=[qs_state] + radios,
-#             outputs=[result_html]
-#         )
-
-#         # Reset handler
-#         def on_reset():
-#             empty_lbls = [""]*5
-#             empty_opts = [[]]*5
-#             hide = [False]*5
-#             return (
-#                 [[]] +                # state
-#                 empty_lbls +          # labels
-#                 empty_opts  +         # options
-#                 hide + hide +         # visibility off
-#                 [gr.update(value="", visible=True)]
-#             )
-
-#         reset_btn.click(
-#             on_reset,
-#             inputs=[],
-#             outputs=[qs_state,
-#                      q_labels[0], q_labels[1], q_labels[2], q_labels[3], q_labels[4],
-#                      radios[0],   radios[1],   radios[2],   radios[3],   radios[4],
-#                      q_labels[0], q_labels[1], q_labels[2], q_labels[3], q_labels[4],
-#                      radios[0],   radios[1],   radios[2],   radios[3],   radios[4],
-#                      result_html]
-#         )
-
-#     return demo
 
 """
 Note:

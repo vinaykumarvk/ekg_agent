@@ -1,11 +1,12 @@
 from __future__ import annotations
+from typing import Optional, List
 
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
-    OPENAI_API_KEY: str | None = None
+    OPENAI_API_KEY: Optional[str] = None
     MODEL_DEFAULT: str = "gpt-4o"
     KG_PATH: str = ""
     CACHE_DIR: str = "/tmp/ekg_cache"
@@ -23,8 +24,8 @@ class Settings(BaseSettings):
     ADMIN_PASSWORD_HASH: str = (
         "$2b$12$4LnAjeX8ZBpBVyvrucwYcOGWvrEU6fCgtqlDJbw6yCmKjfir7k0AS"
     )  # Hash for 'ChangeMe123!'
-    GOOGLE_SERVICE_ACCOUNT_FILE: str | None = None
-    GOOGLE_ALLOWED_MIME_TYPES: list[str] = Field(
+    GOOGLE_SERVICE_ACCOUNT_FILE: Optional[str] = None
+    GOOGLE_ALLOWED_MIME_TYPES: List[str] = Field(
         default_factory=lambda: [
             "application/pdf",
             "text/plain",
@@ -38,7 +39,7 @@ class Settings(BaseSettings):
 
     @field_validator("OPENAI_API_KEY")
     @classmethod
-    def validate_openai_key(cls, v: str | None) -> str | None:
+    def validate_openai_key(cls, v: Optional[str]) -> Optional[str]:
         if v and not v.startswith("sk-"):
             raise ValueError("Invalid OpenAI API key format")
         return v
