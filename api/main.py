@@ -172,8 +172,8 @@ def render_template(name: str, request: Request, context: dict[str, Any]):
     response = templates.TemplateResponse(name, context)
     return apply_security_headers(response)
 
-# Request timeout configuration (30 minutes for deep mode)
-REQUEST_TIMEOUT = 1800  # 30 minutes
+# Request timeout configuration (20 minutes)
+REQUEST_TIMEOUT = 1200  # 20 minutes
 
 # Request metrics
 _request_count = 0
@@ -486,15 +486,33 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
     
     # Handle GCS paths (gs://bucket/path)
     if kg_path.startswith("gs://"):
-        # Download from GCS to temporary location
+        # Cache downloaded files to avoid re-downloading on every request
+        # File cache: keep downloaded file, but still load graph fresh each time
         import tempfile
-        temp_dir = Path(tempfile.gettempdir()) / "ekg_kg"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        local_path = temp_dir / f"{domain_id}_kg_{int(time.time())}.json"
+        import hashlib
+        cache_dir = Path(tempfile.gettempdir()) / "ekg_kg_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
         
-        # Download from GCS - fail explicitly if it doesn't work
-        if not _download_from_gcs(kg_path, str(local_path)):
-            raise RuntimeError(f"Failed to download KG for domain '{domain_id}' from GCS: {kg_path}")
+        # Create stable cache key from GCS path
+        cache_key = hashlib.md5(kg_path.encode()).hexdigest()
+        local_path = cache_dir / f"{domain_id}_kg_{cache_key}.json"
+        
+        # Re-download if file doesn't exist or is older than 1 hour
+        # This balances freshness with performance
+        CACHE_MAX_AGE = 3600  # 1 hour in seconds
+        should_download = True
+        
+        if local_path.exists():
+            file_age = time.time() - local_path.stat().st_mtime
+            if file_age < CACHE_MAX_AGE:
+                should_download = False
+                log.debug(f"Using cached KG file for {domain_id} (age: {file_age:.0f}s)")
+        
+        if should_download:
+            log.info(f"Downloading KG from GCS for {domain_id}: {kg_path}")
+            # Download from GCS - fail explicitly if it doesn't work
+            if not _download_from_gcs(kg_path, str(local_path)):
+                raise RuntimeError(f"Failed to download KG for domain '{domain_id}' from GCS: {kg_path}")
         
         if not local_path.exists():
             raise FileNotFoundError(f"KG file not found after download: {local_path}")

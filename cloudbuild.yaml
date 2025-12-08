@@ -32,7 +32,7 @@ steps:
       - '--cpu'
       - '2'
       - '--timeout'
-      - '300'
+      - '1200'
       - '--max-instances'
       - '10'
       - '--min-instances'
