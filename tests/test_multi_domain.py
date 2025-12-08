@@ -89,7 +89,7 @@ def test_query_wealth_management_domain():
     assert r.status_code == 200
     data = r.json()
     assert data["meta"]["domain"] == "wealth_management"
-    assert data["meta"]["vectorstore_id"] == "vs_689b49252a4c8191a12a1528a475fbd8"
+    assert data["meta"]["vectorstore_id"] == "vs_6910a0f29b548191befd180730d968ee"
 
 
 def test_query_apf_domain():
@@ -122,7 +122,7 @@ def test_query_apf_domain():
     assert r.status_code == 200
     data = r.json()
     assert data["meta"]["domain"] == "apf"
-    assert data["meta"]["vectorstore_id"] == "vs_68ea1f9e59b8819193d3c092779bb47e"
+    assert data["meta"]["vectorstore_id"] == "vs_6910a0f29b548191befd180730d968ee"
 
 
 def test_domain_independence():

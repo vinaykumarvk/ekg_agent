@@ -36,6 +36,24 @@ class Settings(BaseSettings):
             "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ]
     )
+    # Vector Store IDs - can be set via environment variables or Google Cloud Secret Manager
+    DOC_VECTOR_STORE_ID: Optional[str] = Field(
+        None,
+        description="Document vector store ID (shared across domains). Can be set via DOC_VECTOR_STORE_ID env var or Secret Manager."
+    )
+    KG_VECTOR_STORE_ID: Optional[str] = Field(
+        None,
+        description="Knowledge Graph vector store ID. Can be set via KG_VECTOR_STORE_ID env var or Secret Manager."
+    )
+    # Domain-specific vector store IDs (optional, fallback to DOC_VECTOR_STORE_ID)
+    WEALTH_MANAGEMENT_VECTOR_STORE_ID: Optional[str] = Field(
+        None,
+        description="Wealth management domain vector store ID. Falls back to DOC_VECTOR_STORE_ID if not set."
+    )
+    APF_VECTOR_STORE_ID: Optional[str] = Field(
+        None,
+        description="APF domain vector store ID. Falls back to DOC_VECTOR_STORE_ID if not set."
+    )
 
     @field_validator("OPENAI_API_KEY")
     @classmethod

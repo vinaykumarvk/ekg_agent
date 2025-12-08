@@ -33,9 +33,12 @@ COPY . /app
 RUN pip install .
 
 # Security: run as non-root
+# Create appuser and set up directories with proper permissions
 RUN useradd -m appuser \
  && mkdir -p /tmp/ekg_cache \
- && chown -R appuser:appuser /tmp/ekg_cache
+ && mkdir -p /app/data/vectorstores \
+ && chown -R appuser:appuser /tmp/ekg_cache \
+ && chown -R appuser:appuser /app
 USER appuser
 
 # Cloud Run expects the server to listen on $PORT

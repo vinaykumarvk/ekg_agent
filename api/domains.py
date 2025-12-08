@@ -2,17 +2,22 @@
 Domain Registry for Multi-Tenant EKG Agent
 
 Each domain represents a distinct subject area with its own:
-- Knowledge graph (local path or GCS path gs://bucket/path)
-- Default vector store
+- Knowledge graph
+- Default vector store (from environment variables or Secret Manager)
 - Configuration parameters
 
-KG paths can be configured via environment variables:
-- WEALTH_MANAGEMENT_KG_PATH: Path to wealth management KG (local or gs://)
-- APF_KG_PATH: Path to APF KG (local or gs://)
+Vector Store IDs are read from environment variables (or .env file locally):
+- DOC_VECTOR_STORE_ID: Default document vector store (shared)
+- KG_VECTOR_STORE_ID: Knowledge Graph vector store
+- WEALTH_MANAGEMENT_VECTOR_STORE_ID: Override for wealth_management domain
+- APF_VECTOR_STORE_ID: Override for apf domain
+
+In Google Cloud, these can be set via Secret Manager and will be injected as environment variables.
 """
 import os
 from dataclasses import dataclass
 from typing import Dict, Optional
+from api.settings import settings
 
 
 @dataclass
@@ -20,9 +25,8 @@ class DomainConfig:
     """Configuration for a specific domain/subject"""
     domain_id: str
     name: str
-    kg_path: str  # Local path or GCS path (gs://bucket/path)
-    default_vectorstore_id: Optional[str] = None  # Document vector store ID
-    kg_vectorstore_id: Optional[str] = None  # KG vector store ID (for KG node search)
+    kg_path: str
+    default_vectorstore_id: Optional[str] = None
     description: str = ""
     
     def to_dict(self):
@@ -33,34 +37,46 @@ class DomainConfig:
             "description": self.description,
             "kg_path": self.kg_path,
             "default_vectorstore_id": self.default_vectorstore_id,
-            "kg_vectorstore_id": self.kg_vectorstore_id,
         }
 
 
-# Default KG paths (can be overridden by environment variables)
-# For production, set env vars to GCS paths like: gs://your-bucket/kg/wealth_product_kg.json
-DEFAULT_WEALTH_KG_PATH = "data/kg/wealth_product_kg.json"
-DEFAULT_APF_KG_PATH = "data/kg/apf_kg.json"
+def _get_vector_store_id(domain_id: str) -> Optional[str]:
+    """
+    Get vector store ID for a domain from environment variables or settings.
+    Priority:
+    1. Domain-specific env var (e.g., WEALTH_MANAGEMENT_VECTOR_STORE_ID)
+    2. DOC_VECTOR_STORE_ID (shared default)
+    3. None (will cause error if domain requires it)
+    
+    In Google Cloud, these are injected from Secret Manager as environment variables.
+    """
+    # Try domain-specific override first
+    domain_env_var = f"{domain_id.upper()}_VECTOR_STORE_ID"
+    domain_id_value = os.getenv(domain_env_var) or getattr(settings, domain_env_var, None)
+    if domain_id_value:
+        return domain_id_value
+    
+    # Fall back to shared DOC_VECTOR_STORE_ID
+    doc_vs_id = os.getenv("DOC_VECTOR_STORE_ID") or settings.DOC_VECTOR_STORE_ID
+    return doc_vs_id
+
 
 # Registry of available domains
-# Vector store IDs from docs/kg_vector_response_v2.py:
-# DOC_VECTOR_STORE_ID = "vs_6910a0f29b548191befd180730d968ee" (for documents)
-# KG_VECTOR_STORE_ID = "vs_6934751b8a90819190113fe85b689848" (for KG nodes)
+# Vector store IDs are read from environment variables (or .env file)
+# In production (Google Cloud), these come from Secret Manager
 DOMAINS: Dict[str, DomainConfig] = {
     "wealth_management": DomainConfig(
         domain_id="wealth_management",
         name="Wealth Management",
-        kg_path=os.getenv("WEALTH_MANAGEMENT_KG_PATH", DEFAULT_WEALTH_KG_PATH),
-        default_vectorstore_id="vs_6910a0f29b548191befd180730d968ee",  # DOC_VECTOR_STORE_ID
-        kg_vectorstore_id="vs_6934751b8a90819190113fe85b689848",  # KG_VECTOR_STORE_ID
+        kg_path=os.getenv("WEALTH_MANAGEMENT_KG_PATH", "data/kg/wealth_product_kg.json"),
+        default_vectorstore_id=_get_vector_store_id("wealth_management"),
         description="Mutual funds, orders, customer onboarding, and wealth management processes"
     ),
     "apf": DomainConfig(
         domain_id="apf",
         name="APF",
-        kg_path=os.getenv("APF_KG_PATH", DEFAULT_APF_KG_PATH),
-        default_vectorstore_id="vs_6910a0f29b548191befd180730d968ee",  # DOC_VECTOR_STORE_ID (shared)
-        kg_vectorstore_id="vs_6934751b8a90819190113fe85b689848",  # KG_VECTOR_STORE_ID (shared)
+        kg_path=os.getenv("APF_KG_PATH", "data/kg/apf_kg.json"),
+        default_vectorstore_id=_get_vector_store_id("apf"),
         description="APF process data"
     ),
 }
@@ -118,4 +134,3 @@ def domain_exists(domain_id: str) -> bool:
         True if domain exists, False otherwise
     """
     return domain_id in DOMAINS
-
