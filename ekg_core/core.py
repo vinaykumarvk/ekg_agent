@@ -1792,6 +1792,15 @@ def answer_with_kg_and_vector(q, G, by_id, name_index, client, kg_vector_store_i
     # Step 4: Generate KG text
     kg_text = generate_kg_text(kg_result, by_id)
     
+    # Log KG retrieval status for debugging
+    expanded_node_ids = kg_result.get("expanded_node_ids", [])
+    edges = kg_result.get("edges", [])
+    log = logging.getLogger(__name__)
+    log.info(f"KG retrieval: {len(expanded_node_ids)} nodes, {len(edges)} edges, kg_text_length={len(kg_text)}")
+    
+    if not expanded_node_ids and not edges:
+        log.warning("No KG nodes or edges retrieved - answer may not be properly grounded")
+    
     # Step 5: Format prompt
     expanded_queries_str = "\n".join(f"{i+1}. {query}" for i, query in enumerate(expanded_queries))
     message = PROMPT_SET.get(mode, PROMPT_SET["balanced"]).format(
