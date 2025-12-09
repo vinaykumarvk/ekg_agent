@@ -483,10 +483,18 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
     from ekg_core import load_kg_from_json
     from api.domains import get_domain
     
+    log.info("KG load start: domain=%s", domain_id)
     # Get domain configuration
     domain_config = get_domain(domain_id)
     # Use dynamic getter to read env vars at runtime
     kg_path = domain_config.get_kg_path()
+    log.info(
+        "KG config: domain=%s raw_path=%s kg_vectorstore_id=%s default_vs_id=%s",
+        domain_id,
+        kg_path,
+        domain_config.kg_vectorstore_id,
+        domain_config.default_vectorstore_id,
+    )
     
     if not kg_path:
         raise ValueError(f"KG path not configured for domain '{domain_id}'. Set {domain_id.upper()}_KG_PATH environment variable.")
@@ -513,13 +521,42 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
             file_age = time.time() - local_path.stat().st_mtime
             if file_age < CACHE_MAX_AGE:
                 should_download = False
-                log.debug(f"Using cached KG file for {domain_id} (age: {file_age:.0f}s)")
+                log.info(
+                    "KG cache hit: domain=%s path=%s age=%ss",
+                    domain_id,
+                    local_path,
+                    f"{file_age:.0f}",
+                )
+            else:
+                log.info(
+                    "KG cache stale: domain=%s path=%s age=%ss (max=%s)",
+                    domain_id,
+                    local_path,
+                    f"{file_age:.0f}",
+                    CACHE_MAX_AGE,
+                )
         
         if should_download:
-            log.info(f"Downloading KG from GCS for {domain_id}: {kg_path}")
+            log.info(
+                "KG download start: domain=%s gcs=%s dest=%s",
+                domain_id,
+                kg_path,
+                local_path,
+            )
             # Download from GCS - fail explicitly if it doesn't work
             if not _download_from_gcs(kg_path, str(local_path)):
                 raise RuntimeError(f"Failed to download KG for domain '{domain_id}' from GCS: {kg_path}")
+            else:
+                try:
+                    size_bytes = local_path.stat().st_size
+                    log.info(
+                        "KG download complete: domain=%s dest=%s size=%s bytes",
+                        domain_id,
+                        local_path,
+                        size_bytes,
+                    )
+                except Exception:
+                    log.info("KG download complete: domain=%s dest=%s", domain_id, local_path)
         
         if not local_path.exists():
             raise FileNotFoundError(f"KG file not found after download: {local_path}")
@@ -534,9 +571,16 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
     if not os.path.exists(kg_path):
         raise FileNotFoundError(f"KG file not found for domain '{domain_id}': {kg_path}")
     
-    log.info(f"Loading KG for domain '{domain_id}' from {kg_path}")
+    log.info("KG load dispatch: domain=%s path=%s", domain_id, kg_path)
     G, by_id, name_index = load_kg_from_json(kg_path)
-    log.info(f"✓ Loaded KG for '{domain_id}': {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(name_index)} aliases")
+    log.info(
+        "KG load success: domain=%s nodes=%s edges=%s aliases=%s path=%s",
+        domain_id,
+        G.number_of_nodes(),
+        G.number_of_edges(),
+        len(name_index),
+        kg_path,
+    )
     
     return G, by_id, name_index
 
@@ -873,5 +917,4 @@ def answer(req: AskRequest) -> AskResponse:
         # Surface a clean 500 with message; full stacks remain in logs
         log.error(f"Unexpected error in request {request_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
-
 

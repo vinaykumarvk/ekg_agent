@@ -12,12 +12,13 @@ import numpy as np
 import networkx as nx
 from openai import OpenAI
 
+log = logging.getLogger(__name__)
+
 try:
     from rapidfuzz import process, fuzz
     _HAS_RAPIDFUZZ = True
 except ImportError:
     _HAS_RAPIDFUZZ = False
-    log = logging.getLogger(__name__)
     log.warning("rapidfuzz not available, using fallback")
 
 """## Embedding Functions"""
@@ -1516,7 +1517,6 @@ def _resolve_kg_path(kg_path: str) -> str | None:
     Resolve a KG path with local-first search and optional GCS fallback for
     master_knowledge_graph.json.
     """
-    log = logging.getLogger(__name__)
     p = Path(kg_path)
     repo_root = Path(__file__).resolve().parent.parent
 
@@ -1531,6 +1531,7 @@ def _resolve_kg_path(kg_path: str) -> str | None:
 
     for cand in candidates:
         if cand.exists():
+            log.info("KG path resolved locally: %s", cand)
             return str(cand)
 
     # GCS fallback: explicit gs:// in path or MASTER_KG_GCS_URI env
@@ -1543,6 +1544,7 @@ def _resolve_kg_path(kg_path: str) -> str | None:
     if gcs_uri:
         cache_dir = Path(os.getenv("CACHE_DIR", "/tmp/ekg_cache")) / "kg"
         dest = cache_dir / p.name
+        log.info("KG not found locally, attempting GCS download: %s -> %s", gcs_uri, dest)
         if _download_from_gcs(gcs_uri, dest):
             return str(dest)
 
@@ -1557,10 +1559,12 @@ def load_kg_from_json(kg_path: str):
     
     Returns: (G, by_id, name_index) tuple
     """
+    log.info("Resolving KG path: %s", kg_path)
     resolved_path = _resolve_kg_path(kg_path)
     if not resolved_path:
         raise FileNotFoundError(f"Knowledge graph file not found: {kg_path}")
 
+    log.info("Opening KG file: %s", resolved_path)
     with open(resolved_path, "r", encoding="utf-8") as f:
         KG = json.load(f)
     
@@ -1593,4 +1597,11 @@ def load_kg_from_json(kg_path: str):
         attrs["type"] = e.get("type", "RELATED")
         G.add_edge(u, v, **attrs)
     
+    log.info(
+        "Loaded KG: path=%s nodes=%s edges=%s aliases=%s",
+        resolved_path,
+        len(nodes),
+        len(edges),
+        len(name_index),
+    )
     return G, by_id, dict(name_index)
