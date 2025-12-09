@@ -59,22 +59,13 @@ class DomainConfig:
 
 def _get_vector_store_id(domain_id: str) -> str:
     """
-    Get document vector store ID for a domain from environment variables or settings.
-    Priority:
-    1. Domain-specific env var (e.g., WEALTH_MANAGEMENT_VECTOR_STORE_ID)
-    2. DOC_VECTOR_STORE_ID (shared default)
+    Get document vector store ID for a domain.
+    For simplicity and consistency, we now always use DOC_VECTOR_STORE_ID
+    (shared default). Domain-specific overrides are intentionally ignored to
+    avoid drift between environments.
     
-    Raises ValueError if neither is configured.
-    
-    In Google Cloud, these are injected from Secret Manager as environment variables.
+    Raises ValueError if DOC_VECTOR_STORE_ID is not configured.
     """
-    # Try domain-specific override first
-    domain_env_var = f"{domain_id.upper()}_VECTOR_STORE_ID"
-    domain_id_value = os.getenv(domain_env_var) or getattr(settings, domain_env_var, None)
-    if domain_id_value:
-        return domain_id_value
-    
-    # Try shared DOC_VECTOR_STORE_ID
     doc_vs_id = os.getenv("DOC_VECTOR_STORE_ID") or settings.DOC_VECTOR_STORE_ID
     if doc_vs_id:
         return doc_vs_id
@@ -82,7 +73,7 @@ def _get_vector_store_id(domain_id: str) -> str:
     # No fallback - fail explicitly
     raise ValueError(
         f"Vector store ID not configured for domain '{domain_id}'. "
-        f"Set {domain_env_var} or DOC_VECTOR_STORE_ID environment variable."
+        "Set DOC_VECTOR_STORE_ID environment variable."
     )
 
 
