@@ -407,7 +407,14 @@ def get_client() -> OpenAI:
     """Create OpenAI client using env/Secret Manager-provided key."""
     if not settings.OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY not configured")
-    return OpenAI(api_key=settings.OPENAI_API_KEY)
+    # Set high timeout for OpenAI client (20 minutes) to match REQUEST_TIMEOUT
+    import httpx
+    timeout = httpx.Timeout(1200.0, connect=60.0)  # 20 min total, 60s connect
+    return OpenAI(
+        api_key=settings.OPENAI_API_KEY,
+        timeout=timeout,
+        max_retries=2
+    )
 
 
 def _download_from_gcs(gcs_path: str, local_path: str) -> bool:
@@ -790,10 +797,28 @@ def answer(req: AskRequest) -> AskResponse:
             # Add conversational context to the question
             enhanced_question = f"Previous context ID: {response_id}\n\nQuestion: {req.question}"
         
-        # Execute with timeout
-        log.info(f"Executing agent.answer for request {request_id}")
+        # Execute with timeout (20 minutes)
+        log.info(f"Executing agent.answer for request {request_id} (timeout: {REQUEST_TIMEOUT}s)")
         try:
-            raw = agent.answer(enhanced_question)  # dict from orchestrator/core
+            import concurrent.futures
+            import signal
+            
+            def execute_answer():
+                return agent.answer(enhanced_question)
+            
+            # Use ThreadPoolExecutor with timeout
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(execute_answer)
+                try:
+                    raw = future.result(timeout=REQUEST_TIMEOUT)  # dict from orchestrator/core
+                except concurrent.futures.TimeoutError:
+                    log.error(f"Request {request_id} timed out after {REQUEST_TIMEOUT}s")
+                    raise HTTPException(
+                        status_code=504,
+                        detail=f"Request timed out after {REQUEST_TIMEOUT} seconds. The request is taking longer than expected. Please try again or use a simpler query."
+                    )
+        except HTTPException:
+            raise
         except Exception as e:
             log.error(f"Agent execution failed for request {request_id}: {e}")
             

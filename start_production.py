@@ -82,7 +82,9 @@ def main():
             log_level=os.getenv('LOG_LEVEL', 'info').lower(),
             access_log=True,
             server_header=False,
-            date_header=False
+            date_header=False,
+            timeout_keep_alive=1200,  # 20 minutes keep-alive timeout
+            timeout_graceful_shutdown=1200  # 20 minutes graceful shutdown timeout
         )
         
     except Exception as e:
