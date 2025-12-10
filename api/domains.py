@@ -3,7 +3,7 @@ Domain Registry for Multi-Tenant EKG Agent
 
 Each domain represents a distinct subject area with its own:
 - Knowledge graph (loaded from GCS)
-- Default vector store (from DOC_VECTORSTORE_ID or domain-specific override)
+- Default vector store (from DOC_VECTOR_STORE_ID or domain-specific override)
 - Configuration parameters
 
 All paths and IDs are configured via environment variables - no hardcoded values.
