@@ -2,21 +2,15 @@
 Domain Registry for Multi-Tenant EKG Agent
 
 Each domain represents a distinct subject area with its own:
-- Knowledge graph
-- Default vector store (from environment variables or Secret Manager)
+- Knowledge graph (loaded from GCS)
+- Default vector store (from DOC_VECTORSTORE_ID or domain-specific override)
 - Configuration parameters
 
-Vector Store IDs are read from environment variables (or .env file locally):
-- DOC_VECTOR_STORE_ID: Default document vector store (shared)
-- KG_VECTOR_STORE_ID: Knowledge Graph vector store
-- WEALTH_MANAGEMENT_VECTOR_STORE_ID: Override for wealth_management domain
-- APF_VECTOR_STORE_ID: Override for apf domain
-
-In Google Cloud, these can be set via Secret Manager and will be injected as environment variables.
+All paths and IDs are configured via environment variables - no hardcoded values.
 """
-import os
 from dataclasses import dataclass
 from typing import Dict, Optional
+
 from api.settings import settings
 
 
@@ -26,24 +20,8 @@ class DomainConfig:
     domain_id: str
     name: str
     kg_path: str
-    default_vectorstore_id: Optional[str] = None  # Document vector store ID
-    kg_vectorstore_id: Optional[str] = None  # KG vector store ID (for KG node search)
+    default_vectorstore_id: str  # Required, no longer optional
     description: str = ""
-    
-    def get_kg_path(self) -> str:
-        """
-        Get KG path dynamically from environment variable.
-        This ensures env vars are read at runtime, not at module load time.
-        Raises ValueError if environment variable is not set.
-        """
-        env_var_name = f"{self.domain_id.upper()}_KG_PATH"
-        env_path = os.getenv(env_var_name)
-        if not env_path:
-            raise ValueError(
-                f"KG path not configured for domain '{self.domain_id}'. "
-                f"Set {env_var_name} environment variable."
-            )
-        return env_path
     
     def to_dict(self):
         """Convert to dictionary for API responses"""
@@ -51,72 +29,43 @@ class DomainConfig:
             "domain_id": self.domain_id,
             "name": self.name,
             "description": self.description,
-            "kg_path": self.get_kg_path(),  # Use dynamic getter
+            "kg_path": self.kg_path,
             "default_vectorstore_id": self.default_vectorstore_id,
-            "kg_vectorstore_id": self.kg_vectorstore_id,
         }
 
 
-def _get_vector_store_id(domain_id: str) -> str:
+def _get_domains() -> Dict[str, DomainConfig]:
     """
-    Get document vector store ID for a domain.
-    For simplicity and consistency, we now always use DOC_VECTOR_STORE_ID
-    (shared default). Domain-specific overrides are intentionally ignored to
-    avoid drift between environments.
-    
-    Raises ValueError if DOC_VECTOR_STORE_ID is not configured.
+    Build domain registry from environment variables.
+    All KG paths must be GCS paths (gs://...).
+    Vector store IDs default to DOC_VECTOR_STORE_ID unless overridden.
     """
-    doc_vs_id = os.getenv("DOC_VECTOR_STORE_ID") or settings.DOC_VECTOR_STORE_ID
-    if doc_vs_id:
-        return doc_vs_id
-    
-    # No fallback - fail explicitly
-    raise ValueError(
-        f"Vector store ID not configured for domain '{domain_id}'. "
-        "Set DOC_VECTOR_STORE_ID environment variable."
-    )
+    return {
+        "wealth_management": DomainConfig(
+            domain_id="wealth_management",
+            name="Wealth Management",
+            kg_path=settings.WEALTH_MANAGEMENT_KG_PATH,  # GCS path from env
+            default_vectorstore_id=(
+                settings.WEALTH_MANAGEMENT_VECTOR_STORE_ID 
+                or settings.DOC_VECTOR_STORE_ID  # Fallback to DOC_VECTOR_STORE_ID
+            ),
+            description="Mutual funds, orders, customer onboarding, and wealth management processes"
+        ),
+        "apf": DomainConfig(
+            domain_id="apf",
+            name="APF",
+            kg_path=settings.APF_KG_PATH,  # GCS path from env
+            default_vectorstore_id=(
+                settings.APF_VECTOR_STORE_ID 
+                or settings.DOC_VECTOR_STORE_ID  # Fallback to DOC_VECTOR_STORE_ID
+            ),
+            description="APF process data"
+        ),
+    }
 
 
-def _get_kg_vector_store_id() -> str:
-    """
-    Get KG vector store ID from environment variables or settings.
-    Raises ValueError if not configured.
-    
-    In Google Cloud, this is injected from Secret Manager as an environment variable.
-    """
-    kg_vs_id = os.getenv("KG_VECTOR_STORE_ID") or settings.KG_VECTOR_STORE_ID
-    if kg_vs_id:
-        return kg_vs_id
-    
-    # No fallback - fail explicitly
-    raise ValueError(
-        "KG vector store ID not configured. Set KG_VECTOR_STORE_ID environment variable."
-    )
-
-
-# Registry of available domains
-# Vector store IDs are read from environment variables (or .env file)
-# In production (Google Cloud), these come from Secret Manager
-# Note: kg_path defaults are only used for initialization - actual loading uses get_kg_path()
-# which requires environment variables to be set
-DOMAINS: Dict[str, DomainConfig] = {
-    "wealth_management": DomainConfig(
-        domain_id="wealth_management",
-        name="Wealth Management",
-        kg_path="",  # Will be read from WEALTH_MANAGEMENT_KG_PATH env var at runtime
-        default_vectorstore_id=_get_vector_store_id("wealth_management"),
-        kg_vectorstore_id=_get_kg_vector_store_id(),
-        description="Mutual funds, orders, customer onboarding, and wealth management processes"
-    ),
-    "apf": DomainConfig(
-        domain_id="apf",
-        name="APF",
-        kg_path="",  # Will be read from APF_KG_PATH env var at runtime
-        default_vectorstore_id=_get_vector_store_id("apf"),
-        kg_vectorstore_id=_get_kg_vector_store_id(),
-        description="APF process data"
-    ),
-}
+# Initialize domains from environment variables
+DOMAINS: Dict[str, DomainConfig] = _get_domains()
 
 
 def get_domain(domain_id: str) -> DomainConfig:
@@ -171,3 +120,4 @@ def domain_exists(domain_id: str) -> bool:
         True if domain exists, False otherwise
     """
     return domain_id in DOMAINS
+

@@ -8,47 +8,16 @@ import logging
 import uuid
 import asyncio
 import time
-import secrets
-from pathlib import Path
-from typing import Any, Dict, Tuple, List, Optional
+from functools import lru_cache
+from typing import Any, Dict, Tuple
 from datetime import datetime
 
-from fastapi import (
-    FastAPI,
-    HTTPException,
-    Request,
-    Form,
-    UploadFile,
-    File,
-    status,
-)
-from fastapi.exceptions import RequestValidationError
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from starlette.middleware.sessions import SessionMiddleware
 from openai import OpenAI
 
-from api.schemas import (
-    AskRequest,
-    AskResponse,
-    VectorStoreUploadResponse,
-    GoogleDriveIngestRequest,
-)
+from api.schemas import AskRequest, AskResponse
 from api.settings import settings
-from api.security import (
-    verify_password,
-    generate_session_identifier,
-    generate_csrf_token,
-)
-from api.vector_store import (
-    ingest_file,
-    persist_upload,
-    REGISTRY,
-    MAX_FILE_SIZE_BYTES,
-)
-from api.google_drive import drive_client, extract_folder_id
 from agents.ekg_agent import EKGAgent
 
 # -----------------------------------------------------------------------------
@@ -66,123 +35,20 @@ logging.basicConfig(
 log = logging.getLogger("ekg_agent")  # Application-specific logger
 app = FastAPI(title="KG Vector Response API", version="2.0.0")
 
-# Add validation error handler for better error messages
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle validation errors and return detailed error messages"""
-    errors = []
-    for error in exc.errors():
-        field = " -> ".join(str(loc) for loc in error.get("loc", []))
-        msg = error.get("msg", "Validation error")
-        error_type = error.get("type", "unknown")
-        errors.append({
-            "field": field,
-            "message": msg,
-            "type": error_type
-        })
-    
-    log.warning(f"Validation error on {request.url.path}: {errors}")
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": "Validation error",
-            "errors": errors,
-            "body": exc.body if hasattr(exc, 'body') else None
-        }
-    )
-
-BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = Path(settings.CACHE_DIR) / "uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=settings.SESSION_SECRET_KEY,
-    session_cookie=settings.SESSION_COOKIE_NAME,
-    https_only=settings.SESSION_COOKIE_SECURE,
-    same_site=settings.SESSION_COOKIE_SAMESITE,
-)
-
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
-static_dir = BASE_DIR / "static"
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-
-
-def humanize_bytes(value: int) -> str:
-    units = ["bytes", "KB", "MB", "GB", "TB"]
-    size = float(value)
-    for unit in units:
-        if size < 1024 or unit == units[-1]:
-            if unit == "bytes":
-                return f"{int(size)} {unit}"
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{value} bytes"
-
-
-def ensure_session(request: Request) -> None:
-    if "session_id" not in request.session:
-        request.session["session_id"] = generate_session_identifier()
-
-
-def get_csrf_token(request: Request) -> str:
-    token = request.session.get("csrf_token")
-    if not token:
-        token = generate_csrf_token()
-        request.session["csrf_token"] = token
-    return token
-
-
-def validate_csrf(request: Request, submitted_token: Optional[str]) -> None:
-    expected = request.session.get("csrf_token")
-    if not expected or not submitted_token or not secrets.compare_digest(expected, submitted_token):
-        raise HTTPException(status_code=400, detail="Invalid CSRF token")
-
-
-def is_authenticated(request: Request) -> bool:
-    return bool(request.session.get("is_authenticated"))
-
-
-templates.env.globals.update(
-    max_file_size=MAX_FILE_SIZE_BYTES,
-    app_name="EKG Vector Store Admin",
-    is_authenticated=is_authenticated,
-)
-templates.env.filters["human_bytes"] = humanize_bytes
-
-SECURITY_HEADERS = {
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-    "X-Frame-Options": "DENY",
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "geolocation=()",
-    "Content-Security-Policy": "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:",
-}
-
-
-def apply_security_headers(response):
-    for key, value in SECURITY_HEADERS.items():
-        response.headers.setdefault(key, value)
-    return response
-
-
-def render_template(name: str, request: Request, context: dict[str, Any]):
-    response = templates.TemplateResponse(name, context)
-    return apply_security_headers(response)
-
-# Request timeout configuration (20 minutes)
-REQUEST_TIMEOUT = 1200  # 20 minutes
+# Request timeout configuration (5 minutes for deep mode)
+REQUEST_TIMEOUT = 300  # 5 minutes
 
 # Request metrics
 _request_count = 0
 _response_times = []
 
-# (Optional) CORS for browser callers. Adjust allow_origins for stricter policy.
+# CORS configuration - configurable via CORS_ORIGINS env var
+# For production, set CORS_ORIGINS to specific domains (comma-separated) instead of "*"
+cors_origins_str = getattr(settings, 'CORS_ORIGINS', '*')
+cors_origins = ["*"] if cors_origins_str == "*" else [origin.strip() for origin in cors_origins_str.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -215,259 +81,24 @@ async def log_requests(request: Request, call_next):
     return response
 
 # -----------------------------------------------------------------------------
-# Admin web experience
-# -----------------------------------------------------------------------------
-
-
-@app.get("/admin/login", response_class=HTMLResponse)
-async def login_get(request: Request):
-    ensure_session(request)
-    if is_authenticated(request):
-        response = RedirectResponse(url="/admin/ekg", status_code=status.HTTP_303_SEE_OTHER)
-        return apply_security_headers(response)
-
-    context = {
-        "request": request,
-        "csrf_token": get_csrf_token(request),
-        "max_file_size": MAX_FILE_SIZE_BYTES,
-        "error": None,
-    }
-    return render_template("login.html", request, context)
-
-
-@app.post("/admin/login", response_class=HTMLResponse)
-async def login_post(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    csrf_token: str = Form(...),
-):
-    ensure_session(request)
-    validate_csrf(request, csrf_token)
-
-    if (
-        secrets.compare_digest(username.strip(), settings.ADMIN_USERNAME)
-        and verify_password(password, settings.ADMIN_PASSWORD_HASH)
-    ):
-        request.session["is_authenticated"] = True
-        request.session["authenticated_at"] = datetime.utcnow().isoformat()
-        request.session["csrf_token"] = generate_csrf_token()
-        response = RedirectResponse(url="/admin/ekg", status_code=status.HTTP_303_SEE_OTHER)
-        return apply_security_headers(response)
-
-    context = {
-        "request": request,
-        "csrf_token": get_csrf_token(request),
-        "error": "Invalid credentials",
-        "max_file_size": MAX_FILE_SIZE_BYTES,
-    }
-    response = render_template("login.html", request, context)
-    response.status_code = status.HTTP_401_UNAUTHORIZED
-    return response
-
-
-@app.post("/admin/logout")
-async def logout_post(request: Request, csrf_token: str = Form(...)):
-    if not is_authenticated(request):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    validate_csrf(request, csrf_token)
-    request.session.clear()
-    response = RedirectResponse(url="/admin/login", status_code=status.HTTP_303_SEE_OTHER)
-    return apply_security_headers(response)
-
-
-@app.get("/admin/ekg", response_class=HTMLResponse)
-async def admin_dashboard(request: Request):
-    ensure_session(request)
-    if not is_authenticated(request):
-        response = RedirectResponse(url="/admin/login", status_code=status.HTTP_303_SEE_OTHER)
-        return apply_security_headers(response)
-
-    records = await REGISTRY.list_records()
-    context = {
-        "request": request,
-        "records": records,
-        "csrf_token": get_csrf_token(request),
-        "max_file_size": MAX_FILE_SIZE_BYTES,
-    }
-    return render_template("admin_dashboard.html", request, context)
-
-
-@app.post("/admin/vector-store/upload", response_model=VectorStoreUploadResponse)
-async def upload_vector_store_file(
-    request: Request,
-    vector_store_name: str = Form(...),
-    csrf_token: str = Form(...),
-    file: UploadFile = File(...),
-):
-    if not is_authenticated(request):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    validate_csrf(request, csrf_token)
-
-    try:
-        client = get_client()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    temp_path, _, sanitized_name = await persist_upload(file, UPLOAD_DIR)
-    try:
-        stored, vector_store_id = await ingest_file(
-            client=client,
-            vector_store_name=vector_store_name,
-            file_path=temp_path,
-            original_filename=sanitized_name,
-        )
-    finally:
-        temp_path.unlink(missing_ok=True)
-
-    return VectorStoreUploadResponse(
-        vector_store_id=vector_store_id,
-        file_id=stored.file_id,
-        filename=stored.filename,
-        size_bytes=stored.size_bytes,
-    )
-
-
-@app.get("/admin/google-drive/files")
-async def google_drive_files(request: Request, folder_link: str):
-    if not is_authenticated(request):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    folder_id = extract_folder_id(folder_link)
-    files = await drive_client.list_folder(folder_id)
-
-    allowed_files = [
-        file
-        for file in files
-        if file.mime_type in settings.GOOGLE_ALLOWED_MIME_TYPES
-        and file.size <= MAX_FILE_SIZE_BYTES
-        and file.size > 0
-    ]
-    return {
-        "folderId": folder_id,
-        "files": [
-            {
-                "id": file.id,
-                "name": file.name,
-                "mimeType": file.mime_type,
-                "size": file.size,
-                "modifiedTime": file.modified_time,
-            }
-            for file in allowed_files
-        ]
-    }
-
-
-@app.post("/admin/google-drive/ingest", response_model=List[VectorStoreUploadResponse])
-async def google_drive_ingest(
-    request: Request,
-    payload: GoogleDriveIngestRequest,
-):
-    if not is_authenticated(request):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    header_token = request.headers.get("X-CSRF-Token")
-    validate_csrf(request, header_token)
-
-    if not payload.file_ids:
-        raise HTTPException(status_code=400, detail="No files selected")
-
-    try:
-        client = get_client()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    responses: List[VectorStoreUploadResponse] = []
-
-    for file_id in payload.file_ids:
-        temp_path = UPLOAD_DIR / f"drive_{file_id}_{uuid.uuid4().hex}"
-        downloaded_path, _, filename = await drive_client.download_file(file_id, temp_path)
-        try:
-            stored, vector_store_id = await ingest_file(
-                client=client,
-                vector_store_name=payload.vector_store_name,
-                file_path=downloaded_path,
-                original_filename=filename,
-            )
-            responses.append(
-                VectorStoreUploadResponse(
-                    vector_store_id=vector_store_id,
-                    file_id=stored.file_id,
-                    filename=stored.filename,
-                    size_bytes=stored.size_bytes,
-                )
-            )
-        finally:
-            downloaded_path.unlink(missing_ok=True)
-
-    return responses
-
-
-# -----------------------------------------------------------------------------
 # Lazy singletons
 # -----------------------------------------------------------------------------
+@lru_cache(maxsize=1)
 def get_client() -> OpenAI:
-    """Create OpenAI client using env/Secret Manager-provided key."""
+    """Create OpenAI client once, using env/Secret Manager-provided key."""
     if not settings.OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY not configured")
-    # Set high timeout for OpenAI client (20 minutes) to match REQUEST_TIMEOUT
-    import httpx
-    timeout = httpx.Timeout(1200.0, connect=60.0)  # 20 min total, 60s connect
-    return OpenAI(
-        api_key=settings.OPENAI_API_KEY,
-        timeout=timeout,
-        max_retries=2
-    )
+    return OpenAI(api_key=settings.OPENAI_API_KEY)
 
-
-def _download_from_gcs(gcs_path: str, local_path: str) -> bool:
-    """
-    Download a file from Google Cloud Storage.
-    
-    Args:
-        gcs_path: GCS path in format gs://bucket/path/to/file
-        local_path: Local path to save the file
-        
-    Returns:
-        True if download successful, False otherwise
-    """
-    try:
-        from google.cloud import storage
-        
-        # Parse gs://bucket/path format
-        if not gcs_path.startswith("gs://"):
-            log.error(f"Invalid GCS path format: {gcs_path}")
-            return False
-        
-        path_parts = gcs_path[5:].split("/", 1)
-        if len(path_parts) != 2:
-            log.error(f"Invalid GCS path format: {gcs_path}")
-            return False
-        
-        bucket_name, blob_path = path_parts
-        
-        log.info(f"Downloading KG from GCS: {gcs_path}")
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(blob_path)
-        
-        # Ensure local directory exists
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        
-        blob.download_to_filename(local_path)
-        log.info(f"✓ Downloaded KG from GCS to {local_path}")
-        return True
-        
-    except ImportError:
-        log.warning("google-cloud-storage not installed, cannot download from GCS")
-        return False
-    except Exception as e:
-        log.error(f"Failed to download from GCS: {e}")
-        return False
-
+# Multi-domain KG cache: domain_id -> (G, by_id, name_index)
+_KG_CACHE: Dict[str, Tuple[Any, Dict[str, Any], Dict[str, Any]]] = {}
 
 def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str, Any]]:
     """
-    Load graph artifacts for a specific domain.
-    Supports both local files and Google Cloud Storage (gs:// paths).
-    Always loads fresh - no caching.
+    Load graph artifacts for a specific domain from GCS.
+    
+    IMPORTANT: Only GCS paths (gs://bucket/path) are supported.
+    All KG files must be stored in Google Cloud Storage.
     
     Args:
         domain_id: Domain identifier (e.g., 'wealth_management')
@@ -476,111 +107,63 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
         Tuple of (G, by_id, name_index) for the domain
         
     Raises:
-        ValueError: If domain_id is invalid
-        FileNotFoundError: If KG file is not found
-        RuntimeError: If GCS download fails
+        ValueError: If kg_path is not a valid GCS path
+        ImportError: If google-cloud-storage is not installed
     """
     from ekg_core import load_kg_from_json
     from api.domains import get_domain
+    from google.cloud import storage
+    import tempfile
     
-    log.info("KG load start: domain=%s", domain_id)
+    # Check cache first
+    if domain_id in _KG_CACHE:
+        log.debug(f"Using cached KG for domain: {domain_id}")
+        return _KG_CACHE[domain_id]
+    
     # Get domain configuration
     domain_config = get_domain(domain_id)
-    # Use dynamic getter to read env vars at runtime
-    kg_path = domain_config.get_kg_path()
-    log.info(
-        "KG config: domain=%s raw_path=%s kg_vectorstore_id=%s default_vs_id=%s",
-        domain_id,
-        kg_path,
-        domain_config.kg_vectorstore_id,
-        domain_config.default_vectorstore_id,
-    )
+    kg_path = domain_config.kg_path
     
-    if not kg_path:
-        raise ValueError(f"KG path not configured for domain '{domain_id}'. Set {domain_id.upper()}_KG_PATH environment variable.")
+    # Validate GCS path - NO LOCAL FALLBACK
+    if not kg_path.startswith("gs://"):
+        raise ValueError(
+            f"Invalid KG path for domain '{domain_id}': '{kg_path}'. "
+            f"Only GCS paths (gs://bucket/path) are supported. "
+            f"Set {domain_id.upper()}_KG_PATH environment variable to a valid GCS path."
+        )
     
-    # Handle GCS paths (gs://bucket/path)
-    if kg_path.startswith("gs://"):
-        # Cache downloaded files to avoid re-downloading on every request
-        # File cache: keep downloaded file, but still load graph fresh each time
-        import tempfile
-        import hashlib
-        cache_dir = Path(tempfile.gettempdir()) / "ekg_kg_cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create stable cache key from GCS path
-        cache_key = hashlib.md5(kg_path.encode()).hexdigest()
-        local_path = cache_dir / f"{domain_id}_kg_{cache_key}.json"
-        
-        # Re-download if file doesn't exist or is older than 1 hour
-        # This balances freshness with performance
-        CACHE_MAX_AGE = 3600  # 1 hour in seconds
-        should_download = True
-        
-        if local_path.exists():
-            file_age = time.time() - local_path.stat().st_mtime
-            if file_age < CACHE_MAX_AGE:
-                should_download = False
-                log.info(
-                    "KG cache hit: domain=%s path=%s age=%ss",
-                    domain_id,
-                    local_path,
-                    f"{file_age:.0f}",
-                )
-            else:
-                log.info(
-                    "KG cache stale: domain=%s path=%s age=%ss (max=%s)",
-                    domain_id,
-                    local_path,
-                    f"{file_age:.0f}",
-                    CACHE_MAX_AGE,
-                )
-        
-        if should_download:
-            log.info(
-                "KG download start: domain=%s gcs=%s dest=%s",
-                domain_id,
-                kg_path,
-                local_path,
-            )
-            # Download from GCS - fail explicitly if it doesn't work
-            if not _download_from_gcs(kg_path, str(local_path)):
-                raise RuntimeError(f"Failed to download KG for domain '{domain_id}' from GCS: {kg_path}")
-            else:
-                try:
-                    size_bytes = local_path.stat().st_size
-                    log.info(
-                        "KG download complete: domain=%s dest=%s size=%s bytes",
-                        domain_id,
-                        local_path,
-                        size_bytes,
-                    )
-                except Exception:
-                    log.info("KG download complete: domain=%s dest=%s", domain_id, local_path)
-        
-        if not local_path.exists():
-            raise FileNotFoundError(f"KG file not found after download: {local_path}")
-        
-        kg_path = str(local_path)
-    else:
-        # Resolve relative paths from project root
-        if not os.path.isabs(kg_path):
-            base_dir = os.path.dirname(os.path.dirname(__file__))
-            kg_path = os.path.join(base_dir, kg_path)
+    log.info(f"Loading KG for domain '{domain_id}' from GCS: {kg_path}")
     
-    if not os.path.exists(kg_path):
-        raise FileNotFoundError(f"KG file not found for domain '{domain_id}': {kg_path}")
+    # Parse GCS path: gs://bucket-name/path/to/file.json
+    path_parts = kg_path[5:].split("/", 1)  # Remove "gs://" prefix
+    if len(path_parts) != 2:
+        raise ValueError(f"Invalid GCS path format: {kg_path}. Expected: gs://bucket-name/path/to/file.json")
     
-    log.info("KG load dispatch: domain=%s path=%s", domain_id, kg_path)
-    G, by_id, name_index = load_kg_from_json(kg_path)
-    log.info(
-        "KG load success: domain=%s nodes=%s edges=%s aliases=%s path=%s",
-        domain_id,
-        G.number_of_nodes(),
-        G.number_of_edges(),
-        len(name_index),
-        kg_path,
-    )
+    bucket_name = path_parts[0]
+    blob_name = path_parts[1]
+    
+    # Initialize GCS client (uses default credentials or service account)
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    
+    # Download to temporary file
+    with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp_file:
+        blob.download_to_filename(tmp_file.name)
+        tmp_path = tmp_file.name
+    
+    log.info(f"Downloaded KG from GCS to temporary file: {tmp_path}")
+    
+    try:
+        G, by_id, name_index = load_kg_from_json(tmp_path)
+    finally:
+        # Always clean up temporary file
+        os.unlink(tmp_path)
+    
+    log.info(f"✓ Loaded KG for '{domain_id}' from GCS: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(name_index)} aliases")
+    
+    # Cache the result
+    _KG_CACHE[domain_id] = (G, by_id, name_index)
     
     return G, by_id, name_index
 
@@ -590,7 +173,7 @@ def get_agent(domain_id: str, vectorstore_id: str, params: Dict[str, Any] | None
     
     Args:
         domain_id: Domain identifier
-        vectorstore_id: Vector store ID (for documents)
+        vectorstore_id: Vector store ID
         params: Optional parameters for the agent
         
     Returns:
@@ -598,11 +181,6 @@ def get_agent(domain_id: str, vectorstore_id: str, params: Dict[str, Any] | None
     """
     client = get_client()
     G, by_id, name_index = load_graph_artifacts(domain_id)
-    
-    # Get domain config to access kg_vectorstore_id
-    from api.domains import get_domain
-    domain_config = get_domain(domain_id)
-    
     return EKGAgent(
         client=client,
         vs_id=vectorstore_id,
@@ -610,7 +188,6 @@ def get_agent(domain_id: str, vectorstore_id: str, params: Dict[str, Any] | None
         by_id=by_id,
         name_index=name_index,
         preset_params=params or {},
-        kg_vector_store_id=domain_config.kg_vectorstore_id  # Use domain's KG vector store ID
     )
 
 # -----------------------------------------------------------------------------
@@ -633,7 +210,6 @@ def list_available_domains():
                 "kg_nodes": G.number_of_nodes() if G else 0,
                 "kg_edges": G.number_of_edges() if G else 0,
                 "default_vectorstore_id": domain_config.default_vectorstore_id,
-                "kg_vectorstore_id": domain_config.kg_vectorstore_id,
             })
         except Exception as e:
             log.error(f"Error loading domain '{domain_config.domain_id}': {e}")
@@ -645,7 +221,6 @@ def list_available_domains():
                 "kg_nodes": 0,
                 "kg_edges": 0,
                 "default_vectorstore_id": domain_config.default_vectorstore_id,
-                "kg_vectorstore_id": domain_config.kg_vectorstore_id,
                 "error": str(e),
             })
     
@@ -699,12 +274,16 @@ def health():
             health_status["errors"].append(f"Domain {domain_config.domain_id} failed: {str(e)}")
             log.error(f"Domain {domain_config.domain_id} health check failed: {e}")
     
-    # Cache status - caching disabled for fresh answers
-    health_status["cache_status"] = {
-        "query_cache_size": 0,
-        "hits_cache_size": 0,
-        "note": "Caching disabled - all answers are generated fresh"
-    }
+    # Check cache status
+    try:
+        from ekg_core.core import _Q_CACHE, _HITS_CACHE
+        health_status["cache_status"] = {
+            "query_cache_size": _Q_CACHE.size(),
+            "hits_cache_size": _HITS_CACHE.size()
+        }
+    except Exception as e:
+        health_status["cache_status"] = {"error": str(e)}
+        log.warning(f"Cache status check failed: {e}")
     
     # Determine overall status
     if health_status["status"] == "healthy" and any(
@@ -732,9 +311,8 @@ def metrics():
             "count": len(_response_times)
         },
         "cache_status": {
-            "query_cache_size": 0,
-            "hits_cache_size": 0,
-            "note": "Caching disabled - all answers are generated fresh"
+            "query_cache_size": _Q_CACHE.size() if '_Q_CACHE' in globals() else 0,
+            "hits_cache_size": _HITS_CACHE.size() if '_HITS_CACHE' in globals() else 0
         },
         "timestamp": datetime.utcnow().isoformat()
     }
@@ -742,18 +320,16 @@ def metrics():
 # -----------------------------------------------------------------------------
 # Normalize any core/agent output to AskResponse
 # -----------------------------------------------------------------------------
-def _normalize_answer(res: Dict[str, Any], response_id: str, output_format: str = "markdown") -> AskResponse:
+def _normalize_answer(res: Dict[str, Any], response_id: str) -> AskResponse:
     """
     Your core may return:
       - {"markdown": "...", "sources": ..., "meta": ...}
       - {"answer": "...", "curated_chunks": ..., "model_used": ..., "export_path": ...}
-      - {"json_data": {...}, "answer": "..."} for structured responses
       - or nested under "data": {...}
     We normalize to AskResponse.
     """
     # Try top-level first
     markdown = res.get("markdown") or res.get("answer") or ""
-    json_data = res.get("json_data")
     sources = res.get("sources") or res.get("curated_chunks")
     meta = res.get("meta") or {
         "export_path": res.get("export_path"),
@@ -765,7 +341,6 @@ def _normalize_answer(res: Dict[str, Any], response_id: str, output_format: str 
     if not markdown and isinstance(res.get("data"), dict):
         d = res["data"]
         markdown = d.get("markdown") or d.get("answer") or ""
-        json_data = json_data or d.get("json_data")
         sources = sources or d.get("sources")
         if not meta:
             meta = d.get("meta")
@@ -773,23 +348,7 @@ def _normalize_answer(res: Dict[str, Any], response_id: str, output_format: str 
     if markdown is None:
         markdown = ""
 
-    # Return appropriate format
-    if output_format == "json" and json_data:
-        return AskResponse(
-            response_id=response_id,
-            markdown=None,
-            json_data=json_data,
-            sources=sources,
-            meta=meta
-        )
-    else:
-        return AskResponse(
-            response_id=response_id,
-            markdown=markdown,
-            json_data=json_data if output_format == "json" else None,
-            sources=sources,
-            meta=meta
-        )
+    return AskResponse(response_id=response_id, markdown=markdown, sources=sources, meta=meta)
 
 # -----------------------------------------------------------------------------
 # Main endpoint
@@ -835,58 +394,19 @@ def answer(req: AskRequest) -> AskResponse:
         log.info(f"Creating agent for domain {req.domain}, mode {mode}")
         agent = get_agent(req.domain, vectorstore_id, preset_params)
         
-        # Handle regular string question (backward compatible - no structured input here)
+        # Enhance question with conversational context if response_id provided
         enhanced_question = req.question
         if req.response_id or req.conversation_id:
             # Add conversational context to the question
             enhanced_question = f"Previous context ID: {response_id}\n\nQuestion: {req.question}"
         
-        # Execute with timeout (20 minutes)
-        log.info(f"Executing agent.answer for request {request_id} (timeout: {REQUEST_TIMEOUT}s)")
+        # Execute with timeout
+        log.info(f"Executing agent.answer for request {request_id}")
         try:
-            import concurrent.futures
-            import signal
-            
-            def execute_answer():
-                return agent.answer(enhanced_question)
-            
-            # Use ThreadPoolExecutor with timeout
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(execute_answer)
-                try:
-                    raw = future.result(timeout=REQUEST_TIMEOUT)  # dict from orchestrator/core
-                except concurrent.futures.TimeoutError:
-                    log.error(f"Request {request_id} timed out after {REQUEST_TIMEOUT}s")
-                    raise HTTPException(
-                        status_code=504,
-                        detail=f"Request timed out after {REQUEST_TIMEOUT} seconds. The request is taking longer than expected. Please try again or use a simpler query."
-                    )
-        except HTTPException:
-            raise
+            raw = agent.answer(enhanced_question)  # dict from orchestrator/core
         except Exception as e:
             log.error(f"Agent execution failed for request {request_id}: {e}")
-            
-            # Check for OpenAI API errors
-            error_str = str(e).lower()
-            if "429" in error_str or "quota" in error_str or "rate limit" in error_str:
-                raise HTTPException(
-                    status_code=429,
-                    detail="OpenAI API quota exceeded. Please check your billing and plan limits. "
-                           "See https://platform.openai.com/docs/guides/error-codes/api-errors for details."
-                )
-            elif "401" in error_str or "unauthorized" in error_str or "invalid_api_key" in error_str:
-                raise HTTPException(
-                    status_code=500,
-                    detail="OpenAI API authentication failed. Please check your API key configuration."
-                )
-            elif "503" in error_str or "service unavailable" in error_str:
-                raise HTTPException(
-                    status_code=503,
-                    detail="OpenAI API service is temporarily unavailable. Please try again later."
-                )
-            else:
-                # Generic error - log full details but return user-friendly message
-                raise HTTPException(status_code=500, detail="Failed to generate answer")
+            raise HTTPException(status_code=500, detail="Failed to generate answer")
         
         # Add domain info to metadata
         if "meta" not in raw or raw["meta"] is None:
@@ -909,7 +429,7 @@ def answer(req: AskRequest) -> AskResponse:
         log.info(f"Request {request_id} completed in {processing_time:.2f}s")
         
         # Normalize shapes into AskResponse
-        return _normalize_answer(raw, response_id, output_format=req.output_format)
+        return _normalize_answer(raw, response_id)
         
     except HTTPException:
         raise
@@ -917,4 +437,3 @@ def answer(req: AskRequest) -> AskResponse:
         # Surface a clean 500 with message; full stacks remain in logs
         log.error(f"Unexpected error in request {request_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
-

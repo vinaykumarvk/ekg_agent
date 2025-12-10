@@ -12,14 +12,18 @@
       <div class="container header-content">
         <h1>{{ app_name }}</h1>
         {% if is_authenticated(request) %}
-        <form
-          class="logout-form"
-          method="post"
-          action="{{ url_for('logout_post') }}"
-        >
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-          <button type="submit" class="btn-secondary">Log out</button>
-        </form>
+        <nav class="main-nav">
+          <a href="/admin" class="nav-link">Dashboard</a>
+          <a href="/docs" class="nav-link" target="_blank">API Docs</a>
+          <form
+            class="logout-form"
+            method="post"
+            action="{{ url_for('logout_post') }}"
+          >
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="btn-secondary">Log out</button>
+          </form>
+        </nav>
         {% endif %}
       </div>
     </header>

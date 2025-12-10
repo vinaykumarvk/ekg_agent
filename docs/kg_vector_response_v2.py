@@ -53,14 +53,13 @@ except ImportError:
 
 """## Configuration Presets"""
 
-BASE_FOLDER = '/content/drive/MyDrive/Wealth EKG/Product EKG'
-DOC_VECTOR_STORE_ID = "vs_6910a0f29b548191befd180730d968ee"
-KG_VECTOR_STORE_ID = "vs_6934751b8a90819190113fe85b689848"
-# Note: OPENAI_API_KEY should be set via environment variable or Secret Manager in production
-# This is a reference file - actual implementation uses settings.OPENAI_API_KEY
 import os
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # Use environment variable, not hardcoded
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+BASE_FOLDER = '/content/drive/MyDrive/Wealth EKG/Product EKG'
+DOC_VECTOR_STORE_ID = os.getenv("DOC_VECTOR_STORE_ID", "vs_6910a0f29b548191befd180730d968ee")
+KG_VECTOR_STORE_ID = os.getenv("KG_VECTOR_STORE_ID", "vs_6934751b8a90819190113fe85b689848")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # Must be set in environment
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 ANSWER_PRESETS = {
     "concise": {

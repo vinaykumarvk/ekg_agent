@@ -1,14 +1,35 @@
 from __future__ import annotations
-from typing import Optional, List
 
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
-    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_API_KEY: str | None = None
     MODEL_DEFAULT: str = "gpt-4o"
-    KG_PATH: str = ""
+    
+    # Vector Store Configuration (REQUIRED)
+    # Use DOC_VECTOR_STORE_ID as the primary vector store
+    DOC_VECTOR_STORE_ID: str = Field(
+        ...,  # Required - no default
+        description="Primary document vector store ID (e.g., vs_6910a0f29b548191befd180730d968ee)"
+    )
+    
+    # Knowledge Graph GCS Paths (REQUIRED for each domain)
+    # Format: gs://bucket-name/path/to/file.json
+    WEALTH_MANAGEMENT_KG_PATH: str = Field(
+        ...,  # Required - no default
+        description="GCS path to wealth management KG (e.g., gs://my-bucket/kg/wealth_product_kg.json)"
+    )
+    APF_KG_PATH: str = Field(
+        ...,  # Required - no default
+        description="GCS path to APF KG (e.g., gs://my-bucket/kg/apf_kg.json)"
+    )
+    
+    # Optional: Domain-specific vector store overrides (defaults to DOC_VECTOR_STORE_ID)
+    WEALTH_MANAGEMENT_VECTOR_STORE_ID: str | None = None
+    APF_VECTOR_STORE_ID: str | None = None
+    
     CACHE_DIR: str = "/tmp/ekg_cache"
     LOG_LEVEL: str = "INFO"
     MAX_CACHE_SIZE: int = 1000
@@ -18,14 +39,21 @@ class Settings(BaseSettings):
         description="Secret used to sign session cookies. Override in production.",
     )
     SESSION_COOKIE_NAME: str = "ekg_admin_session"
-    SESSION_COOKIE_SECURE: bool = True
+    SESSION_COOKIE_SECURE: bool = Field(
+        default=True,
+        description="Set to False for local development (HTTP). True for production (HTTPS)."
+    )
     SESSION_COOKIE_SAMESITE: str = "lax"
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD_HASH: str = (
         "$2b$12$4LnAjeX8ZBpBVyvrucwYcOGWvrEU6fCgtqlDJbw6yCmKjfir7k0AS"
     )  # Hash for 'ChangeMe123!'
-    GOOGLE_SERVICE_ACCOUNT_FILE: Optional[str] = None
-    GOOGLE_ALLOWED_MIME_TYPES: List[str] = Field(
+    GOOGLE_SERVICE_ACCOUNT_FILE: str | None = None
+    CORS_ORIGINS: str = Field(
+        default="*",
+        description="CORS allowed origins (comma-separated). Use '*' for all, or specific domains for production."
+    )
+    GOOGLE_ALLOWED_MIME_TYPES: list[str] = Field(
         default_factory=lambda: [
             "application/pdf",
             "text/plain",
@@ -36,28 +64,24 @@ class Settings(BaseSettings):
             "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ]
     )
-    # Vector Store IDs - can be set via environment variables or Google Cloud Secret Manager
-    DOC_VECTOR_STORE_ID: Optional[str] = Field(
-        None,
-        description="Document vector store ID (shared across domains). Can be set via DOC_VECTOR_STORE_ID env var or Secret Manager."
-    )
-    KG_VECTOR_STORE_ID: Optional[str] = Field(
-        None,
-        description="Knowledge Graph vector store ID. Can be set via KG_VECTOR_STORE_ID env var or Secret Manager."
-    )
-    # Domain-specific vector store IDs (optional, fallback to DOC_VECTOR_STORE_ID)
-    WEALTH_MANAGEMENT_VECTOR_STORE_ID: Optional[str] = Field(
-        None,
-        description="Wealth management domain vector store ID. Falls back to DOC_VECTOR_STORE_ID if not set."
-    )
-    APF_VECTOR_STORE_ID: Optional[str] = Field(
-        None,
-        description="APF domain vector store ID. Falls back to DOC_VECTOR_STORE_ID if not set."
-    )
+    
+    @field_validator("DOC_VECTOR_STORE_ID")
+    @classmethod
+    def validate_vectorstore_id(cls, v: str) -> str:
+        if not v or not v.startswith("vs_"):
+            raise ValueError("DOC_VECTOR_STORE_ID must start with 'vs_'")
+        return v
+    
+    @field_validator("WEALTH_MANAGEMENT_KG_PATH", "APF_KG_PATH")
+    @classmethod
+    def validate_gcs_path(cls, v: str) -> str:
+        if not v.startswith("gs://"):
+            raise ValueError("KG paths must be GCS paths starting with 'gs://'")
+        return v
 
     @field_validator("OPENAI_API_KEY")
     @classmethod
-    def validate_openai_key(cls, v: Optional[str]) -> Optional[str]:
+    def validate_openai_key(cls, v: str | None) -> str | None:
         if v and not v.startswith("sk-"):
             raise ValueError("Invalid OpenAI API key format")
         return v

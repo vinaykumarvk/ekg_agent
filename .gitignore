@@ -59,12 +59,8 @@ outputs/
 *.tmp
 *.temp
 
-# Google Cloud credentials (NEVER commit these!)
-*.json
-!package.json
-!package-lock.json
-gcp-credentials.json
-*-key.json
-*-credentials.json
-~/.gcp/
-.gcp/
+# GCP Service Account keys (never commit these!)
+*service-account*.json
+*gcp-key*.json
+*credentials*.json
+!**/node_modules/**

@@ -210,6 +210,26 @@ textarea:focus {
   margin: 0;
 }
 
+.main-nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.nav-link {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 500;
+  padding: 0.5rem 0;
+  transition: color 0.2s ease;
+  border-bottom: 2px solid transparent;
+}
+
+.nav-link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
 .alert-success {
   background: rgba(52, 211, 153, 0.15);
   border: 1px solid rgba(52, 211, 153, 0.35);
@@ -220,6 +240,25 @@ textarea:focus {
   .header-content {
     flex-direction: column;
     gap: 1rem;
+  }
+
+  .header-content h1 {
+    font-size: 1.25rem;
+  }
+
+  .main-nav {
+    flex-direction: column;
+    gap: 1rem;
+    width: 100%;
+    align-items: flex-start;
+  }
+
+  .logout-form {
+    width: 100%;
+  }
+
+  .logout-form button {
+    width: 100%;
   }
 
   .form-footer {

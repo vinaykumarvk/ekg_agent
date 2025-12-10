@@ -1,8 +1,15 @@
 import os
 import types
 import pytest
+from unittest.mock import patch, MagicMock
 
 from fastapi.testclient import TestClient
+
+
+# Test configuration
+TEST_VECTOR_STORE_ID = "vs_test_vectorstore_id_12345"
+TEST_WM_KG_PATH = "gs://test-bucket/kg/wealth_product_kg.json"
+TEST_APF_KG_PATH = "gs://test-bucket/kg/apf_kg.json"
 
 
 def make_mock_openai_client():
@@ -43,10 +50,44 @@ def make_mock_openai_client():
 
 @pytest.fixture(autouse=True)
 def set_env(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+    """Set required environment variables for tests"""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key-12345")
+    monkeypatch.setenv("DOC_VECTOR_STORE_ID", TEST_VECTOR_STORE_ID)
+    monkeypatch.setenv("WEALTH_MANAGEMENT_KG_PATH", TEST_WM_KG_PATH)
+    monkeypatch.setenv("APF_KG_PATH", TEST_APF_KG_PATH)
 
 
-def test_health_imports_and_env():
+@pytest.fixture
+def mock_gcs_and_kg():
+    """Mock GCS storage client and KG loading"""
+    import networkx as nx
+    
+    # Create mock graph
+    mock_graph = nx.MultiDiGraph()
+    mock_graph.add_node("node1", id="node1", name="Test Node 1")
+    mock_graph.add_node("node2", id="node2", name="Test Node 2")
+    mock_graph.add_edge("node1", "node2", type="RELATED")
+    
+    def mock_load_kg(path):
+        return mock_graph, {"node1": {}, "node2": {}}, {"test node": ["node1"]}
+    
+    # Mock the google.cloud.storage module directly
+    with patch("google.cloud.storage") as mock_storage:
+        mock_client = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+        mock_storage.Client.return_value = mock_client
+        mock_client.bucket.return_value = mock_bucket
+        mock_bucket.blob.return_value = mock_blob
+        
+        with patch("ekg_core.load_kg_from_json", side_effect=mock_load_kg):
+            yield
+
+
+def test_health_imports_and_env(mock_gcs_and_kg):
+    from api.main import _KG_CACHE
+    _KG_CACHE.clear()
+    
     from api.main import app
     client = TestClient(app)
     r = client.get("/health")
@@ -56,7 +97,10 @@ def test_health_imports_and_env():
     assert "available_modes" in body
 
 
-def test_answer_vector_mode(monkeypatch):
+def test_answer_vector_mode(monkeypatch, mock_gcs_and_kg):
+    from api.main import _KG_CACHE
+    _KG_CACHE.clear()
+    
     # Force intent to vector to avoid KG requirements
     from agents.tools import intent_clarification
 
@@ -71,7 +115,8 @@ def test_answer_vector_mode(monkeypatch):
     def fake_get_client():
         return make_mock_openai_client()
 
-    # Cache removed - no need to clear
+    # Clear cache on provider and set fake
+    main_mod.get_client.cache_clear()  # type: ignore[attr-defined]
     monkeypatch.setattr(main_mod, "get_client", fake_get_client)
 
     app = main_mod.app

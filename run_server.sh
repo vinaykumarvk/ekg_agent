@@ -2,6 +2,15 @@
 
 # EKG Agent - Quick Start Script
 # Usage: ./run_server.sh
+#
+# REQUIRED Environment Variables:
+#   - OPENAI_API_KEY
+#   - DOC_VECTOR_STORE_ID
+#   - WEALTH_MANAGEMENT_KG_PATH (gs://...)
+#   - APF_KG_PATH (gs://...)
+#
+# Optional:
+#   - GOOGLE_APPLICATION_CREDENTIALS (for local GCS access)
 
 set -e
 
@@ -15,29 +24,62 @@ if [ ! -d ".venv" ]; then
     exit 1
 fi
 
-# Check if OPENAI_API_KEY is set
-if [ -z "$OPENAI_API_KEY" ]; then
-    if [ -f ".env" ]; then
-        echo "📝 Loading .env file..."
-        export $(cat .env | grep -v '^#' | xargs)
-    else
-        echo "⚠️  OPENAI_API_KEY not set!"
-        echo "   Create .env file with: OPENAI_API_KEY=your_key_here"
-        echo "   Or export it: export OPENAI_API_KEY=your_key"
-        echo ""
-        echo "   Using dummy key for testing (endpoints will fail with real OpenAI calls)"
-        export OPENAI_API_KEY=dummy
-    fi
+# Load .env file if exists
+if [ -f ".env" ]; then
+    echo "📝 Loading .env file..."
+    export $(cat .env | grep -v '^#' | xargs)
 fi
 
-# Check if KG exists
-if [ ! -f "data/kg/master_knowledge_graph.json" ]; then
-    echo "⚠️  Knowledge graph not found at data/kg/master_knowledge_graph.json"
-    echo "   Some features may not work."
+# Check required environment variables
+MISSING_VARS=""
+
+if [ -z "$OPENAI_API_KEY" ]; then
+    MISSING_VARS="$MISSING_VARS OPENAI_API_KEY"
+fi
+
+if [ -z "$DOC_VECTOR_STORE_ID" ]; then
+    MISSING_VARS="$MISSING_VARS DOC_VECTOR_STORE_ID"
+fi
+
+if [ -z "$WEALTH_MANAGEMENT_KG_PATH" ]; then
+    MISSING_VARS="$MISSING_VARS WEALTH_MANAGEMENT_KG_PATH"
+fi
+
+if [ -z "$APF_KG_PATH" ]; then
+    MISSING_VARS="$MISSING_VARS APF_KG_PATH"
+fi
+
+if [ -n "$MISSING_VARS" ]; then
+    echo "❌ Missing required environment variables:$MISSING_VARS"
+    echo ""
+    echo "Create a .env file with:"
+    echo "  OPENAI_API_KEY=sk-your-key"
+    echo "  DOC_VECTOR_STORE_ID=vs_your_vectorstore_id"
+    echo "  WEALTH_MANAGEMENT_KG_PATH=gs://your-bucket/kg/wealth_product_kg.json"
+    echo "  APF_KG_PATH=gs://your-bucket/kg/apf_kg.json"
+    echo ""
+    echo "For local GCS access, also set:"
+    echo "  GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json"
+    exit 1
+fi
+
+# Validate KG paths are GCS paths
+if [[ ! "$WEALTH_MANAGEMENT_KG_PATH" == gs://* ]]; then
+    echo "❌ WEALTH_MANAGEMENT_KG_PATH must be a GCS path (gs://...)"
+    exit 1
+fi
+
+if [[ ! "$APF_KG_PATH" == gs://* ]]; then
+    echo "❌ APF_KG_PATH must be a GCS path (gs://...)"
+    exit 1
 fi
 
 echo ""
 echo "✓ Environment configured"
+echo "  - DOC_VECTOR_STORE_ID: $DOC_VECTOR_STORE_ID"
+echo "  - WEALTH_MANAGEMENT_KG_PATH: $WEALTH_MANAGEMENT_KG_PATH"
+echo "  - APF_KG_PATH: $APF_KG_PATH"
+echo ""
 echo "✓ Starting server on http://localhost:8000"
 echo ""
 echo "📚 API Documentation: http://localhost:8000/docs"

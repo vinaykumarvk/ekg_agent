@@ -28,17 +28,16 @@ RUN python -m pip install --upgrade pip \
 # Now copy the full source
 COPY . /app
 
-# Install the package with all dependencies
-# The -e flag is not needed in production containers
-RUN pip install .
+# Install your package (editable not needed inside container)
+# Use wheels for speed; fallback to normal if needed
+RUN pip install --no-deps /wheels/*.whl || pip install . \
+ && pip install pydantic-settings
 
 # Security: run as non-root
-# Create appuser and set up directories with proper permissions
+# Create user and set ownership BEFORE switching users
 RUN useradd -m appuser \
- && mkdir -p /tmp/ekg_cache \
- && mkdir -p /app/data/vectorstores \
- && chown -R appuser:appuser /tmp/ekg_cache \
- && chown -R appuser:appuser /app
+ && chown -R appuser:appuser /app \
+ && chmod -R u+rX /app
 USER appuser
 
 # Cloud Run expects the server to listen on $PORT
