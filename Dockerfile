@@ -28,9 +28,8 @@ RUN python -m pip install --upgrade pip \
 # Now copy the full source
 COPY . /app
 
-# Install your package (editable not needed inside container)
-# Use wheels for speed; fallback to normal if needed
-RUN pip install --no-deps /wheels/*.whl || pip install . \
+# Install your package with all dependencies
+RUN pip install . \
  && pip install pydantic-settings
 
 # Security: run as non-root
