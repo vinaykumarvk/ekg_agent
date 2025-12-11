@@ -254,7 +254,7 @@ ANSWER_PRESETS = {
         "lambda_div": 0.6,
         "max_tokens": 1500,
         "max_expanded": 40,
-        "model": "gpt-4o-mini",  # Fast, cost-effective
+        "model": "gpt-5-nano",
         "_mode": "concise"
     },
     "balanced": {
@@ -266,7 +266,7 @@ ANSWER_PRESETS = {
         "lambda_div": 0.6,
         "max_tokens": 6000,
         "max_expanded": 60,
-        "model": "gpt-4o",  # Good balance of quality and speed
+        "model": "gpt-5-mini",
         "_mode": "balanced"
     },
     "deep": {
