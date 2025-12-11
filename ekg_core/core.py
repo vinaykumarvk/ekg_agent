@@ -254,7 +254,7 @@ ANSWER_PRESETS = {
         "lambda_div": 0.6,
         "max_tokens": 1500,
         "max_expanded": 40,
-        "model": "gpt-5-nano",
+        "model": "gpt-4o-mini",  # Fast, cost-effective
         "_mode": "concise"
     },
     "balanced": {
@@ -266,7 +266,7 @@ ANSWER_PRESETS = {
         "lambda_div": 0.6,
         "max_tokens": 6000,
         "max_expanded": 60,
-        "model": "gpt-5-mini",
+        "model": "gpt-4o",  # Good balance of quality and speed
         "_mode": "balanced"
     },
     "deep": {
@@ -278,8 +278,10 @@ ANSWER_PRESETS = {
         "lambda_div": 0.75,
         "max_tokens": 20000,
         "max_expanded": 120,
-        "model": "gpt-5",
-        "_mode": "deep"
+        "model": "o3-deep-research",  # Uses OpenAI background mode
+        "_mode": "deep",
+        "response_mode": "background",
+        "background_mode": True
     }
 }
 

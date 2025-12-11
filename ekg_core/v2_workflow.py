@@ -252,27 +252,85 @@ def parse_llm_json(text: str) -> Dict:
             return {}
 
 
-def get_response_with_file_search(message: str, client, model: str, vector_ids: List[str], stream: bool = False):
+def extract_output_text(resp: Any) -> str:
+    """
+    Safely extract text content from an OpenAI Response object.
+    Handles both completed responses (with output content) and
+    partial/in-progress responses where output may be missing.
+    """
+    if not resp:
+        return ""
+
+    # Some SDK responses expose output_text directly
+    if hasattr(resp, "output_text"):
+        try:
+            return resp.output_text
+        except Exception:
+            pass
+
+    parts = []
+
+    # Preferred: iterate over output content
+    output = getattr(resp, "output", None) or []
+    for item in output:
+        for content in getattr(item, "content", []) or []:
+            text_part = getattr(content, "text", None)
+            if isinstance(text_part, str):
+                parts.append(text_part)
+            elif hasattr(text_part, "value"):
+                parts.append(text_part.value)
+
+    # Fallback for older/alternate shapes
+    if not parts and hasattr(resp, "content"):
+        for content in getattr(resp, "content", []) or []:
+            text_part = getattr(content, "text", None)
+            if isinstance(text_part, str):
+                parts.append(text_part)
+            elif hasattr(text_part, "value"):
+                parts.append(text_part.value)
+
+    return "\n".join([p for p in parts if p]) if parts else ""
+
+
+def get_response_with_file_search(
+    message: str,
+    client,
+    model: str,
+    vector_ids: List[str],
+    stream: bool = False,
+    *,
+    response_mode: str | None = None,
+    metadata: Dict[str, str] | None = None
+):
     """
     Call GPT with file_search tool - CORE V2 MECHANISM.
     This is what makes V2 superior: dynamic retrieval during answer generation.
     """
-    response = client.responses.create(
-        model=model,
-        input=[
+    request_kwargs: Dict[str, Any] = {
+        "model": model,
+        "input": [
             {
                 "role": "user",
                 "content": message
             }
         ],
-        tools=[
+        "tools": [
             {
                 "type": "file_search",
                 "vector_store_ids": vector_ids
             }
         ],
-        stream=stream
-    )
+        "stream": stream
+    }
+
+    if metadata:
+        request_kwargs["metadata"] = metadata
+
+    if response_mode:
+        # response_mode is not yet typed in the SDK, so we pass it via extra_body
+        request_kwargs["extra_body"] = {"response_mode": response_mode}
+
+    response = client.responses.create(**request_kwargs)
     return response
 
 
@@ -325,9 +383,7 @@ def get_relevant_nodes(
         }
 
     # Parse response
-    output_text = resp.output_text if hasattr(resp, 'output_text') else ""
-    if not output_text and hasattr(resp, 'content'):
-        output_text = resp.content[0].text if resp.content else ""
+    output_text = extract_output_text(resp)
 
     try:
         result = parse_llm_json(output_text)
@@ -765,6 +821,8 @@ def v2_hybrid_answer(
     hops = preset_params.get("hops", 1)
     max_expanded = preset_params.get("max_expanded", 60)
     max_queries = preset_params.get("max_queries", 12)
+    response_mode = preset_params.get("response_mode")
+    background_mode = bool(preset_params.get("background_mode")) or response_mode == "background"
     
     # ==========================================================================
     # STEP 1: Semantic KG Node Discovery
@@ -821,16 +879,57 @@ def v2_hybrid_answer(
         expanded_queries_str=expanded_queries_str,
         kg_text=kg_text
     )
+
+    response_metadata = {
+        "mode": mode,
+        "question": question[:500],
+        "doc_vector_store_id": str(doc_vector_store_id),
+        "kg_vector_store_id": str(kg_vector_store_id),
+        "kg_nodes": str(len(kg_result.get('expanded_node_ids', []))),
+        "kg_edges": str(len(kg_result.get('edges', [])))
+    }
     
     try:
         resp = get_response_with_file_search(
             message=message,
             client=client,
             model=model,
-            vector_ids=[doc_vector_store_id]
+            vector_ids=[doc_vector_store_id],
+            response_mode=response_mode,
+            metadata=response_metadata
         )
-        
-        output_text = resp.output_text if hasattr(resp, 'output_text') else ""
+
+        resp_status = getattr(resp, "status", "")
+        resp_id = getattr(resp, "id", None)
+
+        # If running in OpenAI background mode, return immediately with task info
+        if background_mode and resp_status != "completed":
+            analysis = kg_result.get("question_analysis", {})
+            return {
+                "answer": None,
+                "markdown": f"Deep mode request accepted. Task ID: {resp_id}. Poll status to retrieve the final answer.",
+                "stepback_intent": analysis.get('stepback_question', ''),
+                "expanded_question": analysis.get('expanded_question', ''),
+                "business_entities": analysis.get('entities', []),
+                "curated_chunks": [],
+                "meta": {
+                    "v2_workflow": True,
+                    "mode": mode,
+                    "model": model,
+                    "seed_node_names": analysis.get('node_names', []),
+                    "seed_node_ids": kg_result.get('seed_node_ids', []),
+                    "expanded_nodes": len(kg_result.get('expanded_node_ids', [])),
+                    "expanded_edges": len(kg_result.get('edges', [])),
+                    "kg_guided_queries": expanded_queries,
+                    "kg_vector_store_id": kg_vector_store_id,
+                    "doc_vector_store_id": doc_vector_store_id,
+                    "background_mode": True,
+                    "background_task_id": resp_id,
+                    "background_status": resp_status or "in_progress",
+                }
+            }
+
+        output_text = extract_output_text(resp)
         answer_json = parse_llm_json(output_text)
         
         answer = answer_json.get('answer', output_text)
@@ -911,8 +1010,8 @@ __all__ = [
     "generate_kg_text",
     "get_response_with_file_search",
     "parse_llm_json",
+    "extract_output_text",
     "PROMPT_SET",
     "FILE_SEARCH_MESSAGE",
     "STEPBACK_MESSAGE",
 ]
-

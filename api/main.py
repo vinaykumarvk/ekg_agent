@@ -6,10 +6,10 @@ import os
 import pickle
 import logging
 import uuid
-import asyncio
 import time
+import asyncio
 from functools import lru_cache
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request
@@ -19,6 +19,7 @@ from openai import OpenAI
 from api.schemas import AskRequest, AskResponse
 from api.settings import settings
 from agents.ekg_agent import EKGAgent
+from ekg_core.v2_workflow import parse_llm_json, extract_output_text
 
 # -----------------------------------------------------------------------------
 # App & Logging
@@ -359,6 +360,50 @@ def _normalize_answer(res: Dict[str, Any], response_id: str) -> AskResponse:
 
     return AskResponse(response_id=response_id, markdown=markdown, sources=sources, meta=meta)
 
+
+def _build_status_meta(task_id: str, status: str, model: Optional[str] = None) -> Dict[str, Any]:
+    """Helper to standardize background task metadata."""
+    meta = {
+        "background_task_id": task_id,
+        "background_status": status or "unknown",
+        "background_status_endpoint": f"/v1/answer/status/{task_id}",
+    }
+    if model:
+        meta["model"] = model
+    return meta
+
+
+@app.get("/v1/answer/status/{task_id}", response_model=AskResponse)
+def get_answer_status(task_id: str) -> AskResponse:
+    """Poll the status of a background OpenAI task."""
+    try:
+        client = get_client()
+        resp = client.responses.retrieve(task_id)
+    except Exception as e:
+        log.error(f"Failed to retrieve status for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail="Unable to retrieve task status")
+
+    status = getattr(resp, "status", "unknown")
+    meta = _build_status_meta(task_id, status, getattr(resp, "model", None))
+
+    if status != "completed":
+        return AskResponse(
+            response_id=task_id,
+            markdown=f"Task {task_id} is {status or 'in_progress'}.",
+            meta=meta,
+        )
+
+    output_text = extract_output_text(resp)
+    parsed = parse_llm_json(output_text) if output_text else {}
+    markdown = parsed.get("answer") if isinstance(parsed, dict) and parsed else output_text
+
+    return AskResponse(
+        response_id=task_id,
+        markdown=markdown or "",
+        json_data=parsed or None,
+        meta=meta,
+    )
+
 # -----------------------------------------------------------------------------
 # Main endpoint
 # -----------------------------------------------------------------------------
@@ -399,6 +444,9 @@ def answer(req: AskRequest) -> AskResponse:
         preset_params = get_preset(mode)
         if req.params:
             preset_params.update(req.params)  # User params override preset
+        # Pass along context for downstream metadata
+        preset_params["_response_id"] = response_id
+        preset_params["_domain"] = req.domain
         
         # V2 Workflow: Get KG vector store ID for semantic discovery
         kg_vectorstore_id = os.getenv("KG_VECTOR_STORE_ID")
@@ -436,6 +484,13 @@ def answer(req: AskRequest) -> AskResponse:
         if req.conversation_id:
             raw["meta"]["conversation_id"] = req.conversation_id
 
+        # Handle background task metadata for deep mode
+        background_task_id = raw["meta"].get("background_task_id")
+        response_id_to_use = background_task_id or response_id
+        if background_task_id:
+            raw["meta"]["client_response_id"] = response_id
+            raw["meta"]["background_status_endpoint"] = f"/v1/answer/status/{background_task_id}"
+
         # Add timing information
         processing_time = time.time() - start_time
         raw["meta"]["processing_time_seconds"] = round(processing_time, 2)
@@ -444,7 +499,7 @@ def answer(req: AskRequest) -> AskResponse:
         log.info(f"Request {request_id} completed in {processing_time:.2f}s")
         
         # Normalize shapes into AskResponse
-        return _normalize_answer(raw, response_id)
+        return _normalize_answer(raw, response_id_to_use)
         
     except HTTPException:
         raise
