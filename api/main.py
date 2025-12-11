@@ -167,23 +167,32 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
     
     return G, by_id, name_index
 
-def get_agent(domain_id: str, vectorstore_id: str, params: Dict[str, Any] | None = None) -> EKGAgent:
+def get_agent(domain_id: str, vectorstore_id: str, kg_vectorstore_id: str = None, params: Dict[str, Any] | None = None) -> EKGAgent:
     """
     Create an agent for a specific domain and vector store.
     
     Args:
         domain_id: Domain identifier
-        vectorstore_id: Vector store ID
+        vectorstore_id: Document vector store ID
+        kg_vectorstore_id: KG vector store ID (for V2 semantic discovery)
         params: Optional parameters for the agent
         
     Returns:
-        Configured EKGAgent instance
+        Configured EKGAgent instance (V2 workflow)
     """
+    import os
     client = get_client()
     G, by_id, name_index = load_graph_artifacts(domain_id)
+    
+    # Get KG vector store ID from param, env var, or settings
+    kg_vs_id = kg_vectorstore_id or os.getenv("KG_VECTOR_STORE_ID")
+    
+    log.info(f"Creating V2 agent: doc_vs={vectorstore_id}, kg_vs={kg_vs_id}")
+    
     return EKGAgent(
         client=client,
         vs_id=vectorstore_id,
+        kg_vs_id=kg_vs_id,  # V2: Pass KG vector store ID
         G=G,
         by_id=by_id,
         name_index=name_index,
@@ -391,8 +400,14 @@ def answer(req: AskRequest) -> AskResponse:
         if req.params:
             preset_params.update(req.params)  # User params override preset
         
-        log.info(f"Creating agent for domain {req.domain}, mode {mode}")
-        agent = get_agent(req.domain, vectorstore_id, preset_params)
+        # V2 Workflow: Get KG vector store ID for semantic discovery
+        kg_vectorstore_id = os.getenv("KG_VECTOR_STORE_ID")
+        
+        log.info(f"Creating V2 agent for domain {req.domain}, mode {mode}")
+        log.info(f"  doc_vector_store={vectorstore_id}")
+        log.info(f"  kg_vector_store={kg_vectorstore_id}")
+        
+        agent = get_agent(req.domain, vectorstore_id, kg_vectorstore_id, preset_params)
         
         # Enhance question with conversational context if response_id provided
         enhanced_question = req.question
