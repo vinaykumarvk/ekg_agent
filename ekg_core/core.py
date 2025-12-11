@@ -266,7 +266,7 @@ ANSWER_PRESETS = {
         "lambda_div": 0.6,
         "max_tokens": 6000,
         "max_expanded": 60,
-        "model": "gpt-5-mini",
+        "model": "gpt-5.1",
         "_mode": "balanced"
     },
     "deep": {
