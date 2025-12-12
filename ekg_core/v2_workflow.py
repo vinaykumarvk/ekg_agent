@@ -327,7 +327,7 @@ def get_response_with_file_search(
         request_kwargs["metadata"] = metadata
 
     if response_mode:
-        # Pass response_mode through the API - SDK may not have direct support
+        # response_mode is not yet typed in the SDK, so we pass it via extra_body
         request_kwargs["extra_body"] = {"response_mode": response_mode}
 
     response = client.responses.create(**request_kwargs)
@@ -370,8 +370,7 @@ def get_relevant_nodes(
             message=message,
             client=client,
             model=model,
-            vector_ids=[kg_vector_store_id],
-            response_mode="sync"  # Stepback discovery is always synchronous
+            vector_ids=[kg_vector_store_id]
         )
     except Exception as e:
         log.error(f"Error in get_relevant_nodes: {e}")
@@ -827,16 +826,13 @@ def v2_hybrid_answer(
     
     # ==========================================================================
     # STEP 1: Semantic KG Node Discovery
-    # Use gpt-4o for discovery steps (fast, reliable)
-    # o3-deep-research is only for final answer generation (Step 6)
     # ==========================================================================
-    discovery_model = "gpt-4o"  # Always use gpt-4o for discovery
     log.info("V2 STEP 1: Semantic KG node discovery via file_search")
     stepback_response = get_relevant_nodes(
         question=question,
         kg_vector_store_id=kg_vector_store_id,
         client=client,
-        model=discovery_model,
+        model=model,
         max_nodes=10
     )
     

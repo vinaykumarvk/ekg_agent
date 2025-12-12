@@ -75,9 +75,8 @@ class Settings(BaseSettings):
     @field_validator("WEALTH_MANAGEMENT_KG_PATH", "APF_KG_PATH")
     @classmethod
     def validate_gcs_path(cls, v: str) -> str:
-        # Allow local paths for testing, GCS paths for production
-        if not v.startswith("gs://") and not v.startswith("/") and not v.startswith("data/"):
-            raise ValueError("KG paths must be GCS paths (gs://...) or local paths")
+        if not v.startswith("gs://"):
+            raise ValueError("KG paths must be GCS paths starting with 'gs://'")
         return v
 
     @field_validator("OPENAI_API_KEY")
