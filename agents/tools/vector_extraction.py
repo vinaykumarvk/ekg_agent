@@ -63,8 +63,7 @@ def run_vector_answer(
 
     system_msg, user_msg = build_grounded_messages(question=q, compact_nodes=[], compact_edges=[],
                                                    node_context={}, chunks=curated, mode=mode, preset_params=preset_params)
-    response_mode = preset_params.get("response_mode", "sync") if preset_params else "sync"
-    resp   = client.responses.create(model=model, input=[{"role":"system","content":system_msg},{"role":"user","content":user_msg}], response_mode=response_mode)
+    resp   = client.responses.create(model=model, input=[{"role":"system","content":system_msg},{"role":"user","content":user_msg}])
     answer = getattr(resp, "output_text", None) or getattr(resp, "output_texts", [""])[0]
     f2i, i2s = build_citation_map(curated)
 

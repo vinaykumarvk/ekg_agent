@@ -327,7 +327,8 @@ def get_response_with_file_search(
         request_kwargs["metadata"] = metadata
 
     if response_mode:
-        request_kwargs["response_mode"] = response_mode
+        # Pass response_mode through the API - SDK may not have direct support
+        request_kwargs["extra_body"] = {"response_mode": response_mode}
 
     response = client.responses.create(**request_kwargs)
     return response
