@@ -297,7 +297,7 @@ def get_response_with_file_search(
     client,
     model: str,
     vector_ids: List[str],
-    response_mode: str,
+    background: bool = False,
     stream: bool = False,
     metadata: Dict[str, str] | None = None
 ):
@@ -306,7 +306,7 @@ def get_response_with_file_search(
     This is what makes V2 superior: dynamic retrieval during answer generation.
     
     Args:
-        response_mode: Required. Either "sync" for synchronous or "background" for async.
+        background: If True, runs in async background mode (for long-running tasks like o3-deep-research)
     """
     request_kwargs: Dict[str, Any] = {
         "model": model,
@@ -322,10 +322,12 @@ def get_response_with_file_search(
                 "vector_store_ids": vector_ids
             }
         ],
-        "stream": stream,
-        # response_mode passed via extra_body (not yet typed in SDK)
-        "extra_body": {"response_mode": response_mode}
+        "stream": stream
     }
+
+    # OpenAI background mode for long-running tasks
+    if background:
+        request_kwargs["background"] = True
 
     if metadata:
         request_kwargs["metadata"] = metadata
@@ -371,7 +373,7 @@ def get_relevant_nodes(
             client=client,
             model=model,
             vector_ids=[kg_vector_store_id],
-            response_mode="sync"  # Discovery is always synchronous
+            background=False  # Discovery is always synchronous
         )
     except Exception as e:
         log.error(f"Error in get_relevant_nodes: {e}")
@@ -822,8 +824,7 @@ def v2_hybrid_answer(
     hops = preset_params.get("hops", 1)
     max_expanded = preset_params.get("max_expanded", 60)
     max_queries = preset_params.get("max_queries", 12)
-    response_mode = preset_params.get("response_mode", "sync")  # Default to sync
-    background_mode = bool(preset_params.get("background_mode")) or response_mode == "background"
+    background_mode = bool(preset_params.get("background_mode", False))
     
     # ==========================================================================
     # STEP 1: Semantic KG Node Discovery
@@ -901,7 +902,7 @@ def v2_hybrid_answer(
             client=client,
             model=model,
             vector_ids=[doc_vector_store_id],
-            response_mode=response_mode,
+            background=background_mode,
             metadata=response_metadata
         )
 

@@ -256,7 +256,7 @@ ANSWER_PRESETS = {
         "max_expanded": 40,
         "model": "gpt-5-nano",
         "_mode": "concise",
-        "response_mode": "sync"
+        "background_mode": False
     },
     "balanced": {
         "hops": 1,
@@ -269,7 +269,7 @@ ANSWER_PRESETS = {
         "max_expanded": 60,
         "model": "gpt-5.1",
         "_mode": "balanced",
-        "response_mode": "sync"
+        "background_mode": False
     },
     "deep": {
         "hops": 2,
@@ -282,7 +282,6 @@ ANSWER_PRESETS = {
         "max_expanded": 120,
         "model": "o3-deep-research",
         "_mode": "deep",
-        "response_mode": "background",
         "background_mode": True
     },
     "stepback": {
@@ -296,7 +295,7 @@ ANSWER_PRESETS = {
         "max_expanded": 120,
         "model": "gpt-5-nano",
         "_mode": "stepback",
-        "response_mode": "sync"
+        "background_mode": False
     }
 }
 
