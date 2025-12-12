@@ -828,12 +828,15 @@ def v2_hybrid_answer(
     # ==========================================================================
     # STEP 1: Semantic KG Node Discovery
     # ==========================================================================
-    log.info("V2 STEP 1: Semantic KG node discovery via file_search")
+    # Discovery always uses gpt-4o for speed (sync mode, fast turnaround)
+    # The final answer will use the preset's model (e.g., o3-deep-research for deep)
+    discovery_model = "gpt-4o"
+    log.info(f"V2 STEP 1: Semantic KG node discovery via file_search (model={discovery_model})")
     stepback_response = get_relevant_nodes(
         question=question,
         kg_vector_store_id=kg_vector_store_id,
         client=client,
-        model=model,
+        model=discovery_model,
         max_nodes=10
     )
     
