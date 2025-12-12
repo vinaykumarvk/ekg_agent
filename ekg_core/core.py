@@ -255,7 +255,8 @@ ANSWER_PRESETS = {
         "max_tokens": 1500,
         "max_expanded": 40,
         "model": "gpt-5-nano",
-        "_mode": "concise"
+        "_mode": "concise",
+        "response_mode": "sync"
     },
     "balanced": {
         "hops": 1,
@@ -267,7 +268,8 @@ ANSWER_PRESETS = {
         "max_tokens": 6000,
         "max_expanded": 60,
         "model": "gpt-5.1",
-        "_mode": "balanced"
+        "_mode": "balanced",
+        "response_mode": "sync"
     },
     "deep": {
         "hops": 2,
@@ -278,7 +280,7 @@ ANSWER_PRESETS = {
         "lambda_div": 0.75,
         "max_tokens": 20000,
         "max_expanded": 120,
-        "model": "o3-deep-research",  # Uses OpenAI background mode
+        "model": "o3-deep-research",
         "_mode": "deep",
         "response_mode": "background",
         "background_mode": True

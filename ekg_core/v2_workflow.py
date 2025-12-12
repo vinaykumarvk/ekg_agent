@@ -297,14 +297,16 @@ def get_response_with_file_search(
     client,
     model: str,
     vector_ids: List[str],
+    response_mode: str,
     stream: bool = False,
-    *,
-    response_mode: str | None = None,
     metadata: Dict[str, str] | None = None
 ):
     """
     Call GPT with file_search tool - CORE V2 MECHANISM.
     This is what makes V2 superior: dynamic retrieval during answer generation.
+    
+    Args:
+        response_mode: Required. Either "sync" for synchronous or "background" for async.
     """
     request_kwargs: Dict[str, Any] = {
         "model": model,
@@ -320,15 +322,13 @@ def get_response_with_file_search(
                 "vector_store_ids": vector_ids
             }
         ],
-        "stream": stream
+        "stream": stream,
+        # response_mode passed via extra_body (not yet typed in SDK)
+        "extra_body": {"response_mode": response_mode}
     }
 
     if metadata:
         request_kwargs["metadata"] = metadata
-
-    if response_mode:
-        # response_mode is not yet typed in the SDK, so we pass it via extra_body
-        request_kwargs["extra_body"] = {"response_mode": response_mode}
 
     response = client.responses.create(**request_kwargs)
     return response
@@ -370,7 +370,8 @@ def get_relevant_nodes(
             message=message,
             client=client,
             model=model,
-            vector_ids=[kg_vector_store_id]
+            vector_ids=[kg_vector_store_id],
+            response_mode="sync"  # Discovery is always synchronous
         )
     except Exception as e:
         log.error(f"Error in get_relevant_nodes: {e}")
@@ -821,7 +822,7 @@ def v2_hybrid_answer(
     hops = preset_params.get("hops", 1)
     max_expanded = preset_params.get("max_expanded", 60)
     max_queries = preset_params.get("max_queries", 12)
-    response_mode = preset_params.get("response_mode")
+    response_mode = preset_params.get("response_mode", "sync")  # Default to sync
     background_mode = bool(preset_params.get("background_mode")) or response_mode == "background"
     
     # ==========================================================================
