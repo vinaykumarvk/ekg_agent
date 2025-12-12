@@ -96,25 +96,18 @@ _KG_CACHE: Dict[str, Tuple[Any, Dict[str, Any], Dict[str, Any]]] = {}
 
 def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str, Any]]:
     """
-    Load graph artifacts for a specific domain from GCS.
+    Load graph artifacts for a specific domain from GCS or local path.
     
-    IMPORTANT: Only GCS paths (gs://bucket/path) are supported.
-    All KG files must be stored in Google Cloud Storage.
+    Supports both GCS paths (gs://bucket/path) and local file paths for testing.
     
     Args:
         domain_id: Domain identifier (e.g., 'wealth_management')
         
     Returns:
         Tuple of (G, by_id, name_index) for the domain
-        
-    Raises:
-        ValueError: If kg_path is not a valid GCS path
-        ImportError: If google-cloud-storage is not installed
     """
     from ekg_core import load_kg_from_json
     from api.domains import get_domain
-    from google.cloud import storage
-    import tempfile
     
     # Check cache first
     if domain_id in _KG_CACHE:
@@ -125,13 +118,17 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
     domain_config = get_domain(domain_id)
     kg_path = domain_config.kg_path
     
-    # Validate GCS path - NO LOCAL FALLBACK
+    # Handle local paths (for testing)
     if not kg_path.startswith("gs://"):
-        raise ValueError(
-            f"Invalid KG path for domain '{domain_id}': '{kg_path}'. "
-            f"Only GCS paths (gs://bucket/path) are supported. "
-            f"Set {domain_id.upper()}_KG_PATH environment variable to a valid GCS path."
-        )
+        log.info(f"Loading KG for domain '{domain_id}' from local path: {kg_path}")
+        G, by_id, name_index = load_kg_from_json(kg_path)
+        log.info(f"✓ Loaded KG for '{domain_id}': {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(name_index)} aliases")
+        _KG_CACHE[domain_id] = (G, by_id, name_index)
+        return G, by_id, name_index
+    
+    # Handle GCS paths (production)
+    from google.cloud import storage
+    import tempfile
     
     log.info(f"Loading KG for domain '{domain_id}' from GCS: {kg_path}")
     

@@ -255,7 +255,8 @@ ANSWER_PRESETS = {
         "max_tokens": 1500,
         "max_expanded": 40,
         "model": "gpt-5-nano",
-        "_mode": "concise"
+        "_mode": "concise",
+        "response_mode": "sync"
     },
     "balanced": {
         "hops": 1,
@@ -267,7 +268,8 @@ ANSWER_PRESETS = {
         "max_tokens": 6000,
         "max_expanded": 60,
         "model": "gpt-5.1",
-        "_mode": "balanced"
+        "_mode": "balanced",
+        "response_mode": "sync"
     },
     "deep": {
         "hops": 2,
@@ -278,7 +280,7 @@ ANSWER_PRESETS = {
         "lambda_div": 0.75,
         "max_tokens": 20000,
         "max_expanded": 120,
-        "model": "o3-deep-research",  # Uses OpenAI background mode
+        "model": "o3-deep-research",
         "_mode": "deep",
         "response_mode": "background",
         "background_mode": True
@@ -570,7 +572,8 @@ Tone: {tone}"""
         model=model,
         input=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         max_output_tokens=400,
-        temperature=0.2
+        temperature=0.2,
+        response_mode="sync"
     )
     data = safe_parse_json(get_output_text(resp)) or {}
     ents = [e.strip() for e in data.get("entities", []) if isinstance(e, str) and e.strip()]
@@ -1031,7 +1034,8 @@ Use evidence provided. Do not invent."""
         resp = llm_client.responses.create(
             model=model,
             input=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-            max_output_tokens=max_tokens
+            max_output_tokens=max_tokens,
+            response_mode="sync"
         )
         answer_text = getattr(resp, "output_text", "") or ""
     except Exception as e:
@@ -2214,12 +2218,14 @@ def hybrid_answer(q, kg_result, by_id, client, vs_id, model="gpt-4o", max_chunks
     )
 
     # Generate answer with proper system/user structure
+    response_mode = preset_params.get("response_mode", "sync") if preset_params else "sync"
     resp = client.responses.create(
         model=model,
         input=[
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg}
-        ]
+        ],
+        response_mode=response_mode
     )
     answer = resp.output_text
 
@@ -2345,7 +2351,8 @@ Rules:
             input=[{"role": "system", "content": system_msg},
                    {"role": "user", "content": user_msg}],
             max_output_tokens=2000,
-            temperature=0.3
+            temperature=0.3,
+            response_mode="sync"
         )
 
         response_text = get_output_text(resp)
