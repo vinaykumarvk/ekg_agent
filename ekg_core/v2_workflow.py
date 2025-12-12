@@ -828,9 +828,11 @@ def v2_hybrid_answer(
     # ==========================================================================
     # STEP 1: Semantic KG Node Discovery
     # ==========================================================================
-    # Discovery always uses gpt-4o for speed (sync mode, fast turnaround)
-    # The final answer will use the preset's model (e.g., o3-deep-research for deep)
-    discovery_model = "gpt-4o"
+    # Discovery uses the "stepback" preset's model (gpt-5-nano) for fast turnaround
+    # This matches V2 behavior where stepback has its own preset
+    from ekg_core.core import ANSWER_PRESETS
+    stepback_preset = ANSWER_PRESETS.get("stepback", {})
+    discovery_model = stepback_preset.get("model", "gpt-5-nano")
     log.info(f"V2 STEP 1: Semantic KG node discovery via file_search (model={discovery_model})")
     stepback_response = get_relevant_nodes(
         question=question,

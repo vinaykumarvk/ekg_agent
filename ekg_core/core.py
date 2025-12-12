@@ -284,6 +284,19 @@ ANSWER_PRESETS = {
         "_mode": "deep",
         "response_mode": "background",
         "background_mode": True
+    },
+    "stepback": {
+        "hops": 2,
+        "k_suggest": 35,
+        "k_candidates": 40,
+        "max_chunks": 22,
+        "k_each": 8,
+        "lambda_div": 0.75,
+        "max_tokens": 20000,
+        "max_expanded": 120,
+        "model": "gpt-5-nano",
+        "_mode": "stepback",
+        "response_mode": "sync"
     }
 }
 
