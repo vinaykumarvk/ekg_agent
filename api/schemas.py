@@ -1,5 +1,5 @@
-from pydantic import BaseModel, model_validator
-from typing import Any, Dict, Optional, Literal
+from pydantic import BaseModel, model_validator, Field
+from typing import Any, Dict, Optional, Literal, List
 
 class AskRequest(BaseModel):
     # Support both simple string question and structured payload
@@ -11,6 +11,7 @@ class AskRequest(BaseModel):
     conversation_id: Optional[str] = None  # Alternative conversation tracking
     params: Optional[Dict[str, Any]] = None
     output_format: Literal["markdown", "json"] = "markdown"  # Output format control
+    async_mode: bool = Field(default=False, description="Run in background and return task_id immediately")
     
     @model_validator(mode='after')
     def validate_question_or_payload(self):
@@ -30,6 +31,35 @@ class AskResponse(BaseModel):
     json_data: Optional[Dict[str, Any]] = None  # JSON output (for structured responses)
     sources: Optional[Any] = None
     meta: Optional[Dict[str, Any]] = None
+
+class TaskInfo(BaseModel):
+    """Information about a background task"""
+    task_id: str
+    question: str
+    domain: str
+    mode: str
+    status: str
+    error: Optional[str] = None
+    created_at: str
+    updated_at: str
+    completed_at: Optional[str] = None
+
+class TaskListResponse(BaseModel):
+    """Response for listing tasks"""
+    tasks: List[TaskInfo]
+    total: int
+    stats: Optional[Dict[str, int]] = None
+
+class TaskStatusResponse(BaseModel):
+    """Response for task status check"""
+    task_id: str
+    status: str
+    question: str
+    domain: str
+    mode: str
+    created_at: str
+    result: Optional[AskResponse] = None
+    error: Optional[str] = None
 
 class DomainInfo(BaseModel):
     """Information about an available domain"""

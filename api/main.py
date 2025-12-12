@@ -11,15 +11,17 @@ import asyncio
 from functools import lru_cache
 from typing import Any, Dict, Tuple, Optional
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 
-from api.schemas import AskRequest, AskResponse
+from api.schemas import AskRequest, AskResponse, TaskInfo, TaskListResponse, TaskStatusResponse
 from api.settings import settings
 from agents.ekg_agent import EKGAgent
 from ekg_core.v2_workflow import parse_llm_json, extract_output_text
+from api.task_store import get_task_store, TaskStore
 
 # -----------------------------------------------------------------------------
 # App & Logging
@@ -42,6 +44,9 @@ REQUEST_TIMEOUT = 300  # 5 minutes
 # Request metrics
 _request_count = 0
 _response_times = []
+
+# Thread pool for background task execution
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ekg_task_")
 
 # CORS configuration - configurable via CORS_ORIGINS env var
 # For production, set CORS_ORIGINS to specific domains (comma-separated) instead of "*"
@@ -373,15 +378,167 @@ def _build_status_meta(task_id: str, status: str, model: Optional[str] = None) -
     return meta
 
 
+# -----------------------------------------------------------------------------
+# Background Task Processing
+# -----------------------------------------------------------------------------
+def _process_task_in_background(task_id: str, question: str, domain: str, mode: str, 
+                                 vectorstore_id: str, kg_vectorstore_id: str):
+    """
+    Process a task in background thread.
+    Updates task status in SQLite store.
+    """
+    task_store = get_task_store()
+    
+    try:
+        # Update status to processing
+        task_store.update_status(task_id, TaskStore.STATUS_PROCESSING)
+        log.info(f"Background task {task_id} started processing")
+        
+        # Get preset params
+        from ekg_core.core import get_preset
+        preset_params = get_preset(mode)
+        preset_params["_response_id"] = task_id
+        preset_params["_domain"] = domain
+        
+        # Create agent and execute
+        agent = get_agent(domain, vectorstore_id, kg_vectorstore_id, preset_params)
+        raw = agent.answer(question)
+        
+        # Build result
+        result = {
+            "response_id": task_id,
+            "markdown": raw.get("markdown") or raw.get("answer") or "",
+            "sources": raw.get("sources") or raw.get("curated_chunks"),
+            "meta": raw.get("meta", {})
+        }
+        result["meta"]["domain"] = domain
+        result["meta"]["mode"] = mode
+        result["meta"]["task_id"] = task_id
+        
+        # Update status to completed with result
+        task_store.update_status(task_id, TaskStore.STATUS_COMPLETED, result=result)
+        log.info(f"Background task {task_id} completed successfully")
+        
+    except Exception as e:
+        log.error(f"Background task {task_id} failed: {e}", exc_info=True)
+        task_store.update_status(task_id, TaskStore.STATUS_FAILED, error=str(e))
+
+
+@app.get("/v1/tasks", response_model=TaskListResponse)
+def list_tasks(status: Optional[str] = None, limit: int = 50, offset: int = 0):
+    """
+    List all tasks, optionally filtered by status.
+    
+    Args:
+        status: Filter by status (queued, processing, completed, failed)
+        limit: Max tasks to return (default 50)
+        offset: Pagination offset
+    """
+    task_store = get_task_store()
+    
+    tasks = task_store.list_tasks(status=status, limit=limit, offset=offset)
+    stats = task_store.get_stats()
+    
+    return TaskListResponse(
+        tasks=[TaskInfo(**task) for task in tasks],
+        total=stats.get("total", 0),
+        stats=stats
+    )
+
+
+@app.get("/v1/tasks/{task_id}", response_model=TaskStatusResponse)
+def get_task_status(task_id: str):
+    """
+    Get detailed status of a specific task.
+    Returns full result if completed.
+    """
+    task_store = get_task_store()
+    task = task_store.get_task(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    
+    # Build response
+    response = TaskStatusResponse(
+        task_id=task["task_id"],
+        status=task["status"],
+        question=task["question"],
+        domain=task["domain"],
+        mode=task["mode"],
+        created_at=task["created_at"],
+        error=task.get("error")
+    )
+    
+    # Include result if completed
+    if task["status"] == TaskStore.STATUS_COMPLETED and task.get("result"):
+        result = task["result"]
+        response.result = AskResponse(
+            response_id=result.get("response_id", task_id),
+            markdown=result.get("markdown"),
+            json_data=result.get("json_data"),
+            sources=result.get("sources"),
+            meta=result.get("meta")
+        )
+    
+    return response
+
+
+@app.delete("/v1/tasks/{task_id}")
+def delete_task(task_id: str):
+    """Delete a task."""
+    task_store = get_task_store()
+    
+    if not task_store.delete_task(task_id):
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    
+    return {"message": f"Task {task_id} deleted", "task_id": task_id}
+
+
 @app.get("/v1/answer/status/{task_id}", response_model=AskResponse)
 def get_answer_status(task_id: str) -> AskResponse:
-    """Poll the status of a background OpenAI task."""
+    """
+    Poll the status of a task.
+    First checks our SQLite task store, then falls back to OpenAI for deep mode tasks.
+    """
+    # First, check our task store
+    task_store = get_task_store()
+    task = task_store.get_task(task_id)
+    
+    if task:
+        status = task["status"]
+        meta = _build_status_meta(task_id, status)
+        meta["domain"] = task["domain"]
+        meta["mode"] = task["mode"]
+        
+        if status == TaskStore.STATUS_COMPLETED and task.get("result"):
+            result = task["result"]
+            return AskResponse(
+                response_id=task_id,
+                markdown=result.get("markdown", ""),
+                json_data=result.get("json_data"),
+                sources=result.get("sources"),
+                meta={**meta, **result.get("meta", {})}
+            )
+        elif status == TaskStore.STATUS_FAILED:
+            return AskResponse(
+                response_id=task_id,
+                markdown=f"Task failed: {task.get('error', 'Unknown error')}",
+                meta=meta
+            )
+        else:
+            return AskResponse(
+                response_id=task_id,
+                markdown=f"Task is {status}. Question: {task['question'][:100]}...",
+                meta=meta
+            )
+    
+    # Fallback: Check OpenAI for deep mode background tasks
     try:
         client = get_client()
         resp = client.responses.retrieve(task_id)
     except Exception as e:
         log.error(f"Failed to retrieve status for task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail="Unable to retrieve task status")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     status = getattr(resp, "status", "unknown")
     meta = _build_status_meta(task_id, status, getattr(resp, "model", None))
@@ -408,12 +565,13 @@ def get_answer_status(task_id: str) -> AskResponse:
 # Main endpoint
 # -----------------------------------------------------------------------------
 @app.post("/v1/answer", response_model=AskResponse)
-def answer(req: AskRequest) -> AskResponse:
+def answer(req: AskRequest, background_tasks: BackgroundTasks) -> AskResponse:
     start_time = time.time()
     request_id = str(uuid.uuid4())
     
     try:
-        log.info(f"Processing request {request_id} for domain {req.domain}")
+        log.info(f"Processing request {request_id} for domain {req.domain}" + 
+                 (" (async)" if req.async_mode else ""))
         
         from api.domains import get_domain
         
@@ -434,22 +592,65 @@ def answer(req: AskRequest) -> AskResponse:
                        f"Please provide vectorstore_id in request or configure default for domain."
             )
         
+        # Get mode from params
+        from ekg_core.core import get_preset
+        mode = req.params.get("_mode", "balanced") if req.params else "balanced"
+        
+        # V2 Workflow: Get KG vector store ID for semantic discovery
+        kg_vectorstore_id = os.getenv("KG_VECTOR_STORE_ID")
+        
+        # =======================================================================
+        # ASYNC MODE: Queue task and return immediately
+        # =======================================================================
+        if req.async_mode:
+            task_store = get_task_store()
+            task_id = task_store.create_task(
+                question=req.question,
+                domain=req.domain,
+                mode=mode
+            )
+            
+            # Submit to thread pool for background processing
+            _executor.submit(
+                _process_task_in_background,
+                task_id,
+                req.question,
+                req.domain,
+                mode,
+                vectorstore_id,
+                kg_vectorstore_id
+            )
+            
+            log.info(f"Task {task_id} queued for background processing")
+            
+            return AskResponse(
+                response_id=task_id,
+                markdown=f"Task queued successfully. Check status at /v1/tasks/{task_id}",
+                meta={
+                    "task_id": task_id,
+                    "status": "queued",
+                    "async_mode": True,
+                    "status_endpoint": f"/v1/tasks/{task_id}",
+                    "domain": req.domain,
+                    "mode": mode,
+                    "question": req.question[:100] + "..." if len(req.question) > 100 else req.question
+                }
+            )
+        
+        # =======================================================================
+        # SYNC MODE: Process immediately and return result
+        # =======================================================================
         # Generate unique response ID (use provided one or create new)
         response_id = req.response_id or req.conversation_id or str(uuid.uuid4())
         
         # Create agent for this domain + vector store
         # Merge user params with preset parameters
-        from ekg_core.core import get_preset
-        mode = req.params.get("_mode", "balanced") if req.params else "balanced"
         preset_params = get_preset(mode)
         if req.params:
             preset_params.update(req.params)  # User params override preset
         # Pass along context for downstream metadata
         preset_params["_response_id"] = response_id
         preset_params["_domain"] = req.domain
-        
-        # V2 Workflow: Get KG vector store ID for semantic discovery
-        kg_vectorstore_id = os.getenv("KG_VECTOR_STORE_ID")
         
         log.info(f"Creating V2 agent for domain {req.domain}, mode {mode}")
         log.info(f"  doc_vector_store={vectorstore_id}")

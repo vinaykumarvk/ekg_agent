@@ -956,23 +956,8 @@ def v2_hybrid_answer(
     # ==========================================================================
     analysis = kg_result.get("question_analysis", {})
     
-    # Generate markdown with title and metadata
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    markdown = f"""# **{question}**
-
-_Generated: {ts} | Mode: {mode}_
-
-{answer}
-
----
-
-## **Analysis Summary**
-
-- **Stepback Intent**: {stepback_intent or analysis.get('stepback_question', 'N/A')}
-- **Expanded Question**: {expanded_question or analysis.get('expanded_question', 'N/A')}
-- **KG Nodes Used**: {len(kg_result.get('expanded_node_ids', []))}
-- **KG Edges Used**: {len(kg_result.get('edges', []))}
-"""
+    # Generate markdown with only the answer (no metadata or background info)
+    markdown = answer
     
     result = {
         "answer": answer,
