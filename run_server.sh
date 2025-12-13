@@ -55,22 +55,11 @@ if [ -n "$MISSING_VARS" ]; then
     echo "Create a .env file with:"
     echo "  OPENAI_API_KEY=sk-your-key"
     echo "  DOC_VECTOR_STORE_ID=vs_your_vectorstore_id"
-    echo "  WEALTH_MANAGEMENT_KG_PATH=gs://your-bucket/kg/wealth_product_kg.json"
-    echo "  APF_KG_PATH=gs://your-bucket/kg/apf_kg.json"
+    echo "  WEALTH_MANAGEMENT_KG_PATH=gs://your-bucket/kg/wealth_product_kg.json (or local file path for dev)"
+    echo "  APF_KG_PATH=gs://your-bucket/kg/apf_kg.json (or local file path for dev)"
     echo ""
     echo "For local GCS access, also set:"
     echo "  GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json"
-    exit 1
-fi
-
-# Validate KG paths are GCS paths
-if [[ ! "$WEALTH_MANAGEMENT_KG_PATH" == gs://* ]]; then
-    echo "❌ WEALTH_MANAGEMENT_KG_PATH must be a GCS path (gs://...)"
-    exit 1
-fi
-
-if [[ ! "$APF_KG_PATH" == gs://* ]]; then
-    echo "❌ APF_KG_PATH must be a GCS path (gs://...)"
     exit 1
 fi
 
@@ -92,5 +81,4 @@ echo ""
 # Activate venv and run server
 source .venv/bin/activate
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-
 

@@ -74,10 +74,19 @@ class Settings(BaseSettings):
     
     @field_validator("WEALTH_MANAGEMENT_KG_PATH", "APF_KG_PATH")
     @classmethod
-    def validate_gcs_path(cls, v: str) -> str:
-        if not v.startswith("gs://"):
-            raise ValueError("KG paths must be GCS paths starting with 'gs://'")
-        return v
+    def validate_gcs_or_local_path(cls, v: str) -> str:
+        """
+        Accept either:
+        - GCS paths (gs://...) for production
+        - Existing local file paths for local/dev usage
+        """
+        if v.startswith("gs://"):
+            return v
+        from pathlib import Path
+        p = Path(v)
+        if p.exists() and p.is_file():
+            return str(p.resolve())
+        raise ValueError("KG paths must be gs://... or an existing local file path")
 
     @field_validator("OPENAI_API_KEY")
     @classmethod
@@ -123,4 +132,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

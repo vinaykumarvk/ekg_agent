@@ -101,10 +101,7 @@ _KG_CACHE: Dict[str, Tuple[Any, Dict[str, Any], Dict[str, Any]]] = {}
 
 def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str, Any]]:
     """
-    Load graph artifacts for a specific domain from GCS.
-    
-    IMPORTANT: Only GCS paths (gs://bucket/path) are supported.
-    All KG files must be stored in Google Cloud Storage.
+    Load graph artifacts for a specific domain from GCS or local path.
     
     Args:
         domain_id: Domain identifier (e.g., 'wealth_management')
@@ -118,8 +115,6 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
     """
     from ekg_core import load_kg_from_json
     from api.domains import get_domain
-    from google.cloud import storage
-    import tempfile
     
     # Check cache first
     if domain_id in _KG_CACHE:
@@ -130,43 +125,47 @@ def load_graph_artifacts(domain_id: str) -> Tuple[Any, Dict[str, Any], Dict[str,
     domain_config = get_domain(domain_id)
     kg_path = domain_config.kg_path
     
-    # Validate GCS path - NO LOCAL FALLBACK
-    if not kg_path.startswith("gs://"):
-        raise ValueError(
-            f"Invalid KG path for domain '{domain_id}': '{kg_path}'. "
-            f"Only GCS paths (gs://bucket/path) are supported. "
-            f"Set {domain_id.upper()}_KG_PATH environment variable to a valid GCS path."
-        )
+    # GCS path handling
+    if kg_path.startswith("gs://"):
+        # Import GCS dependencies only when needed
+        from google.cloud import storage
+        import tempfile
+        
+        log.info(f"Loading KG for domain '{domain_id}' from GCS: {kg_path}")
+        
+        # Parse GCS path: gs://bucket-name/path/to/file.json
+        path_parts = kg_path[5:].split("/", 1)  # Remove "gs://" prefix
+        if len(path_parts) != 2:
+            raise ValueError(f"Invalid GCS path format: {kg_path}. Expected: gs://bucket-name/path/to/file.json")
+        
+        bucket_name = path_parts[0]
+        blob_name = path_parts[1]
+        
+        # Initialize GCS client (uses default credentials or service account)
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        # Download to temporary file
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp_file:
+            blob.download_to_filename(tmp_file.name)
+            tmp_path = tmp_file.name
+        
+        log.info(f"Downloaded KG from GCS to temporary file: {tmp_path}")
+        
+        try:
+            G, by_id, name_index = load_kg_from_json(tmp_path)
+        finally:
+            # Always clean up temporary file
+            os.unlink(tmp_path)
+    else:
+        # Local file path for dev/docker
+        log.info(f"Loading KG for domain '{domain_id}' from local path: {kg_path}")
+        if not os.path.isfile(kg_path):
+            raise ValueError(f"KG path not found for domain '{domain_id}': {kg_path}")
+        G, by_id, name_index = load_kg_from_json(kg_path)
     
-    log.info(f"Loading KG for domain '{domain_id}' from GCS: {kg_path}")
-    
-    # Parse GCS path: gs://bucket-name/path/to/file.json
-    path_parts = kg_path[5:].split("/", 1)  # Remove "gs://" prefix
-    if len(path_parts) != 2:
-        raise ValueError(f"Invalid GCS path format: {kg_path}. Expected: gs://bucket-name/path/to/file.json")
-    
-    bucket_name = path_parts[0]
-    blob_name = path_parts[1]
-    
-    # Initialize GCS client (uses default credentials or service account)
-    storage_client = storage.Client()
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
-    
-    # Download to temporary file
-    with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp_file:
-        blob.download_to_filename(tmp_file.name)
-        tmp_path = tmp_file.name
-    
-    log.info(f"Downloaded KG from GCS to temporary file: {tmp_path}")
-    
-    try:
-        G, by_id, name_index = load_kg_from_json(tmp_path)
-    finally:
-        # Always clean up temporary file
-        os.unlink(tmp_path)
-    
-    log.info(f"✓ Loaded KG for '{domain_id}' from GCS: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(name_index)} aliases")
+    log.info(f"✓ Loaded KG for '{domain_id}': {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(name_index)} aliases")
     
     # Cache the result
     _KG_CACHE[domain_id] = (G, by_id, name_index)

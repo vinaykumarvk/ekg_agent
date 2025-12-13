@@ -67,11 +67,13 @@ YOUR TASK
       • Produce a cohesive, structured narrative that directly answers the unified intent.
       • Merge overlapping points and remove redundancies.
       • Ensure the explanation is generic and platform-agnostic.
+      • Cite every factual claim with inline markers like [1], [2] that map to retrieved sources.
+      • Add a final "Sources" section listing each cited document (filename/title is enough).
       • Do NOT reference clients, banks, proprietary implementations, or example organizations.
       • Do NOT mention knowledge graphs, nodes, edges, triples, metadata, or relationships.
       • Do NOT start the answer with statements like "Below is an integrated view…",
         "The KG shows…", "From the knowledge graph…", or any similar framing.
-      • Simply present the explanation directly and professionally, as if preparing internal
+        • Simply present the explanation directly and professionally, as if preparing internal
         product documentation or briefing an experienced BA.
 
 5) **Final Output Format (Strict)**
@@ -81,7 +83,11 @@ Respond ONLY with the following JSON object:
   "stepback_intent": "A clear statement of the unified intent.",
   "expanded_question": "A concise, enriched reformulation.",
   "business_entities": ["entity 1", "entity 2", "..."],
-  "answer": "A single integrated answer written in **proper, clean Markdown**, with headings, subheadings, bullet points, or numbered lists.\\n             The answer must NOT include the KG, nodes, relationships, internal tools, or any meta-commentary."
+  "citations": [
+    {{"id": "1", "source": "Document or file name"}},
+    {{"id": "2", "source": "Document or file name"}}
+  ],
+  "answer": "A single integrated answer written in **proper, clean Markdown**, with headings, subheadings, bullet points, or numbered lists.\\n             Include inline citation markers [1], [2] next to each claim and end with a 'Sources' section that maps those markers to the provided citation objects.\\n             The answer must NOT include the KG, nodes, relationships, internal tools, or any meta-commentary."
 }}
 
 Notes:
